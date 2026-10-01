@@ -5,15 +5,21 @@
  * Zelfde model als Demeter / Medusa / Mímir:
  * - $baseUrl is alleen de host
  * - elke BC-instance is een sleutel in $auth_list
- * - $environment is de default-actieve lijst (string of array)
+ * - $environment is de lijst databases waarvan bedrijven in de dropdown komen
+ *
+ * De UI kiest geen environment. Een bedrijf wijst naar precies één database
+ * uit deze lijst (docs/COMPANIES.md). Dezelfde bedrijfsnaam in twee actieve
+ * databases wordt geweigerd — zet FAT en live niet allebei aan als ze dezelfde
+ * bedrijfsnamen delen.
  */
 
 $baseUrl = 'https://kvtmd365.kvt.nl:7148';
 
-// Default: FAT. Live alleen na expliciete keuze in de UI.
+// Actieve databases voor de bedrijven-dropdown. Geen UI-keuze.
 $environment = [
     'kvtmdlive_fat',
-    // 'kvtmdlive_aad',
+    // 'kvtmdlive_aad',       // KVT + HVT
+    // 'kvtgermanylive_aad',  // KVT Germany
 ];
 
 $auth_list = [
@@ -23,6 +29,11 @@ $auth_list = [
         'pass' => 'WEB_SERVICE_ACCESS_KEY',
     ],
     // 'kvtmdlive_aad' => [
+    //     'mode' => 'basic',
+    //     'user' => 'USERNAME',
+    //     'pass' => 'WEB_SERVICE_ACCESS_KEY',
+    // ],
+    // 'kvtgermanylive_aad' => [
     //     'mode' => 'basic',
     //     'user' => 'USERNAME',
     //     'pass' => 'WEB_SERVICE_ACCESS_KEY',
@@ -42,9 +53,10 @@ $ictUsers = $allowedUsers;
 // $asclepiusApiKey = '…';
 // $asclepiusBase = 'https://sleutels.kvt.nl/asclepius';
 
-// Optioneel: Mímir voor lezen van bestaande projectregels
+// Optioneel: bedrijvenlijst uit Mímir GET /companies.php (name + environment).
+// Zonder sleutel ontdekt Calculus de bedrijven via de Automation API.
 // $mimirApi = 'mimir_…';
 // $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 
-// BC company-naam voor Automation API (GUID wordt live opgezocht)
+// Voorkeursbedrijf in de dropdown. Moet in de ontdekte lijst staan.
 // $calculusDefaultCompany = 'KVT';

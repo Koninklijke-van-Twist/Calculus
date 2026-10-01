@@ -13,6 +13,11 @@ require __DIR__ . '/lib/RapidStartBuilder.php';
 require __DIR__ . '/lib/ImportStore.php';
 require __DIR__ . '/lib/AsclepiusClient.php';
 require __DIR__ . '/lib/BcAutomation.php';
+require __DIR__ . '/lib/CompanyCatalog.php';
+
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
 
 const CALCULUS_TEMPLATE = __DIR__ . '/templates/NEWBUILD_CALCULATIE_template.xlsx';
 
@@ -26,38 +31,45 @@ function calculus_user_email(): string
     return strtolower(trim((string) ($_SESSION['user']['email'] ?? 'unknown@local')));
 }
 
-/** @return list<string> */
-function calculus_environments(): array
+/**
+ * @param list<array{name:string,environment:string}> $companies
+ */
+function calculus_selected_company(array $companies, string $posted): string
 {
-    global $auth_list, $environment;
-    $known = is_array($auth_list ?? null) ? array_keys($auth_list) : [];
-    $configured = [];
-    if (is_array($environment ?? null)) {
-        $configured = array_values(array_filter(array_map('strval', $environment)));
-    } elseif (is_string($environment ?? null) && trim($environment) !== '') {
-        $configured = [trim($environment)];
-    }
-    if ($configured !== []) {
-        $map = array_fill_keys($known, true);
-        $configured = array_values(array_filter($configured, static fn(string $e): bool => isset($map[$e])));
-    }
-    if ($configured === [] && $known !== []) {
-        return array_map('strval', $known);
-    }
-
-    return $configured;
-}
-
-function calculus_default_environment(): string
-{
-    $envs = calculus_environments();
-    foreach ($envs as $e) {
-        if (stripos($e, 'fat') !== false) {
-            return $e;
+    foreach ($companies as $row) {
+        if (strcasecmp($row['name'], $posted) === 0) {
+            return $row['name'];
         }
     }
 
-    return $envs[0] ?? '';
+    $preferred = trim((string) ($GLOBALS['calculusDefaultCompany'] ?? ''));
+    if ($preferred !== '') {
+        foreach ($companies as $row) {
+            if (strcasecmp($row['name'], $preferred) === 0) {
+                return $row['name'];
+            }
+        }
+    }
+
+    foreach ($companies as $row) {
+        if (stripos($row['environment'], 'fat') !== false) {
+            return $row['name'];
+        }
+    }
+
+    return $companies[0]['name'] ?? '';
+}
+
+function calculus_environment_note(string $environment): string
+{
+    if ($environment === '') {
+        return 'De omgeving volgt uit het gekozen bedrijf.';
+    }
+    if (stripos($environment, 'fat') === false) {
+        return 'Omgeving voor dit bedrijf: ' . $environment . ' (live — extra bevestiging bij apply).';
+    }
+
+    return 'Omgeving voor dit bedrijf: ' . $environment . ' (FAT).';
 }
 
 function calculus_store(): ImportStore
@@ -179,16 +191,15 @@ try {
         $ticketId = (int) ($_POST['ticket_id'] ?? 0);
         $attachmentId = (int) ($_POST['attachment_id'] ?? 0);
         $projectNo = strtoupper(trim((string) ($_POST['project_no'] ?? '')));
-        $environment = trim((string) ($_POST['environment'] ?? calculus_default_environment()));
-        $company = trim((string) ($_POST['company'] ?? ($GLOBALS['calculusDefaultCompany'] ?? 'KVT')));
+        $postedCompany = trim((string) ($_POST['company'] ?? ''));
         $existingMode = trim((string) ($_POST['existing_mode'] ?? 'abort'));
 
         if ($projectNo === '' || !preg_match('/^PRJ\d+/i', $projectNo)) {
             throw new InvalidArgumentException('Projectnummer verplicht (vorm PRJ…).');
         }
-        if (!in_array($environment, calculus_environments(), true)) {
-            throw new InvalidArgumentException('Ongeldige environment-keuze.');
-        }
+        $resolvedCompany = CompanyCatalog::resolve($postedCompany);
+        $company = $resolvedCompany['name'];
+        $environment = $resolvedCompany['environment'];
 
         if ($ticketId > 0 && $attachmentId > 0) {
             $file = calculus_fetch_ticket_attachment($ticketId, $attachmentId);
@@ -317,9 +328,10 @@ try {
             $client = AsclepiusClient::fromGlobals();
             if ($client !== null) {
                 $msg = sprintf(
-                    "Calculus-import #%d\nProject: %s\nEnvironment: %s\nRegels: %d\nTotaal Excel (Basislijn): € %s\nStatus: %s\nBestand: %s",
+                    "Calculus-import #%d\nProject: %s\nBedrijf: %s\nEnvironment: %s\nRegels: %d\nTotaal Excel (Basislijn): € %s\nStatus: %s\nBestand: %s",
                     $importId,
                     $projectNo,
+                    $company,
                     $environment,
                     count($parsed['lines']),
                     number_format((float) $parsed['excel_total'], 2, ',', '.'),
@@ -349,6 +361,7 @@ try {
             'parsed' => $parsed,
             'project_no' => $projectNo,
             'environment' => $environment,
+            'company' => $company,
             'bc_response' => $bcResponse,
         ];
         unset($_SESSION['calculus_preview']);
@@ -370,11 +383,27 @@ try {
     $flashError = $e->getMessage();
 }
 
-$envs = calculus_environments();
-$defaultEnv = calculus_default_environment();
-$selectedEnv = trim((string) ($_POST['environment'] ?? $defaultEnv));
+$companyCatalog = ['companies' => [], 'warnings' => []];
+try {
+    $companyCatalog = CompanyCatalog::load();
+} catch (Throwable $catalogError) {
+    $flashError = trim($flashError . "\n" . $catalogError->getMessage());
+}
+$companyRows = $companyCatalog['companies'];
+$companyWarnings = $companyCatalog['warnings'];
 $selectedProject = strtoupper(trim((string) ($_POST['project_no'] ?? '')));
-$selectedCompany = trim((string) ($_POST['company'] ?? ($GLOBALS['calculusDefaultCompany'] ?? 'KVT')));
+$selectedCompany = calculus_selected_company($companyRows, trim((string) ($_POST['company'] ?? '')));
+$selectedEnvironment = '';
+foreach ($companyRows as $companyRow) {
+    if ($companyRow['name'] === $selectedCompany) {
+        $selectedEnvironment = $companyRow['environment'];
+        break;
+    }
+}
+$companyEnvMap = [];
+foreach ($companyRows as $companyRow) {
+    $companyEnvMap[$companyRow['name']] = $companyRow['environment'];
+}
 $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
 
 ?>
@@ -403,6 +432,9 @@ $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
   <?php if ($flashOk !== ''): ?>
     <div class="banner ok"><?= calculus_h($flashOk) ?></div>
   <?php endif; ?>
+  <?php foreach ($companyWarnings as $companyWarning): ?>
+    <div class="banner warn"><?= calculus_h($companyWarning) ?></div>
+  <?php endforeach; ?>
 
   <div class="card">
     <h2>1. Bron &amp; project</h2>
@@ -417,17 +449,21 @@ $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
           <input type="text" name="project_no" id="project_no" required placeholder="PRJ2608376" value="<?= calculus_h($selectedProject) ?>">
         </div>
         <div class="field">
-          <label for="environment">Environment</label>
-          <select name="environment" id="environment">
-            <?php foreach ($envs as $env): ?>
-              <option value="<?= calculus_h($env) ?>" <?= $env === $selectedEnv ? 'selected' : '' ?>><?= calculus_h($env) ?></option>
-            <?php endforeach; ?>
-          </select>
-          <p class="muted">Standaard FAT. Live alleen met extra bevestiging bij apply.</p>
-        </div>
-        <div class="field">
           <label for="company">BC-bedrijf</label>
-          <input type="text" name="company" id="company" value="<?= calculus_h($selectedCompany) ?>">
+          <?php if ($companyRows === []): ?>
+            <select name="company" id="company" disabled>
+              <option value="">Geen BC-bedrijven</option>
+            </select>
+          <?php else: ?>
+            <select name="company" id="company" required>
+              <?php foreach ($companyRows as $companyRow): ?>
+                <option value="<?= calculus_h($companyRow['name']) ?>" <?= $companyRow['name'] === $selectedCompany ? 'selected' : '' ?>>
+                  <?= calculus_h($companyRow['name']) ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+          <?php endif; ?>
+          <p class="muted" id="company-env-note"><?= calculus_h(calculus_environment_note($selectedEnvironment)) ?></p>
         </div>
         <div class="field">
           <label for="bascalc">Of upload BASCALC .xlsx</label>
@@ -456,7 +492,6 @@ $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
         <form method="post" enctype="multipart/form-data">
           <input type="hidden" name="ticket_id" value="<?= (int) $selectedTicket ?>">
           <input type="hidden" name="project_no" value="<?= calculus_h($selectedProject) ?>">
-          <input type="hidden" name="environment" value="<?= calculus_h($selectedEnv) ?>">
           <input type="hidden" name="company" value="<?= calculus_h($selectedCompany) ?>">
           <input type="hidden" name="existing_mode" value="<?= calculus_h((string) ($_POST['existing_mode'] ?? 'abort')) ?>">
           <div class="field">
@@ -489,6 +524,7 @@ $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
         <div class="stat"><strong><?= count($lines) ?></strong><span>regels</span></div>
         <div class="stat"><strong>€ <?= calculus_h(number_format((float) $parsed['excel_total'], 2, ',', '.')) ?></strong><span>totaal Basislijn (Excel)</span></div>
         <div class="stat"><strong><?= calculus_h((string) $preview['project_no']) ?></strong><span>project</span></div>
+        <div class="stat"><strong><?= calculus_h((string) ($preview['company'] ?? '')) ?></strong><span>bedrijf</span></div>
         <div class="stat"><strong><?= calculus_h((string) $preview['environment']) ?></strong><span>environment</span></div>
       </div>
 
@@ -584,6 +620,7 @@ $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
       <div class="stats">
         <div class="stat"><strong>#<?= (int) $preview['import_id'] ?></strong><span>import-id</span></div>
         <div class="stat"><strong><?= calculus_h((string) $preview['status']) ?></strong><span>status</span></div>
+        <div class="stat"><strong><?= calculus_h((string) ($preview['company'] ?? '')) ?></strong><span><?= calculus_h((string) ($preview['environment'] ?? '')) ?></span></div>
         <div class="stat"><strong><?= count($preview['parsed']['lines']) ?></strong><span>regels</span></div>
         <div class="stat"><strong>€ <?= calculus_h(number_format((float) $preview['parsed']['excel_total'], 2, ',', '.')) ?></strong><span>Excel-totaal</span></div>
       </div>
@@ -599,5 +636,34 @@ $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
     </div>
   <?php endif; ?>
 </div>
+<?php if ($companyEnvMap !== []): ?>
+<script>
+(function () {
+  var map = <?= json_encode($companyEnvMap, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
+  var select = document.getElementById('company');
+  var note = document.getElementById('company-env-note');
+  if (!select || !note) {
+    return;
+  }
+  function noteFor(environment) {
+    if (!environment) {
+      return 'De omgeving volgt uit het gekozen bedrijf.';
+    }
+    if (environment.toLowerCase().indexOf('fat') === -1) {
+      return 'Omgeving voor dit bedrijf: ' + environment + ' (live — extra bevestiging bij apply).';
+    }
+    return 'Omgeving voor dit bedrijf: ' + environment + ' (FAT).';
+  }
+  var hiddenCompany = document.querySelector('input[type="hidden"][name="company"]');
+  function sync() {
+    note.textContent = noteFor(map[select.value] || '');
+    if (hiddenCompany) {
+      hiddenCompany.value = select.value;
+    }
+  }
+  select.addEventListener('change', sync);
+})();
+</script>
+<?php endif; ?>
 </body>
 </html>
