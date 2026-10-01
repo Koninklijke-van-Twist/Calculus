@@ -1,22 +1,50 @@
+# Deploy van web/ naar sleutels.kvt.nl, zelfde lftp-spiegel als Kothar/Ktesios.
+#
+# Secrets: FTP_HOST, FTP_USERNAME, FTP_PASSWORD, FTP_REMOTE_DIR
+# Verwacht: FTP_REMOTE_DIR=/var/www/html/calculus
+# Tim zet het exacte pad. Een lege waarde of een pad dat niet onder
+# /var/www/html/… ligt, stopt de job vóór lftp (scripts/guard-ftp-remote-dir.sh).
+#
+# cache/, uploads/ en data/ staan niet in de spiegel (serverdata blijft staan).
+# Die mappen worden daarom ook niet gechmod: Kothar doet dat niet, en chmod
+# op een uitgesloten pad faalt of raakt bestanden die deze job niet uploadt.
+# web/auth.php hoort alleen op de server (gitignored + exclude).
+
 name: Deploy to FTP on master push
 
 on:
   push:
     branches:
       - master
+  pull_request:
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: FTP remote dir guard
+        run: bash tests/guard_ftp_remote_dir_test.sh
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install lftp
         run: |
           sudo apt-get update
           sudo apt-get install -y lftp
+
+      - name: Refuse empty or unsafe FTP_REMOTE_DIR
+        env:
+          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
+        run: bash scripts/guard-ftp-remote-dir.sh
 
       - name: Deploy web/ to FTP (with delete & excludes)
         env:
@@ -25,10 +53,12 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
         run: |
+          bash scripts/guard-ftp-remote-dir.sh
           lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_HOST" << EOF
           set cmd:fail-exit true
           set net:max-retries 1
           set net:timeout 20
+          # TLS uit: gelijk aan de andere sleutels-FTP-servers.
           set ftp:ssl-allow false
           set ftp:passive-mode yes
 
@@ -36,14 +66,15 @@ jobs:
 
           mirror -R --delete \
             --exclude-glob .htaccess \
-            --exclude-glob cache/** \
-            --exclude-glob uploads/** \
-            --exclude-glob data/** \
+            --exclude-glob .htpasswd \
             --exclude-glob auth.php \
+            --exclude-glob data/ \
+            --exclude-glob data/** \
+            --exclude-glob cache/ \
+            --exclude-glob cache/** \
+            --exclude-glob uploads/ \
+            --exclude-glob uploads/** \
             ./web .
-
-          set cmd:fail-exit false
-          chmod 777 cache uploads data data/packages
 
           bye
           EOF
