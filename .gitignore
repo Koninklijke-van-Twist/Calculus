@@ -7,3 +7,4 @@ web/data/**
 !web/uploads/.gitkeep
 !web/data/packages/
 !web/data/packages/.gitkeep
+login
