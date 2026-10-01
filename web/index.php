@@ -1,0 +1,603 @@
+<?php
+
+declare(strict_types=1);
+
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+error_reporting(E_ALL);
+
+require __DIR__ . '/auth.php';
+require __DIR__ . '/logincheck.php';
+require __DIR__ . '/lib/BascalcParser.php';
+require __DIR__ . '/lib/RapidStartBuilder.php';
+require __DIR__ . '/lib/ImportStore.php';
+require __DIR__ . '/lib/AsclepiusClient.php';
+require __DIR__ . '/lib/BcAutomation.php';
+
+const CALCULUS_TEMPLATE = __DIR__ . '/templates/NEWBUILD_CALCULATIE_template.xlsx';
+
+function calculus_h(?string $value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+}
+
+function calculus_user_email(): string
+{
+    return strtolower(trim((string) ($_SESSION['user']['email'] ?? 'unknown@local')));
+}
+
+/** @return list<string> */
+function calculus_environments(): array
+{
+    global $auth_list, $environment;
+    $known = is_array($auth_list ?? null) ? array_keys($auth_list) : [];
+    $configured = [];
+    if (is_array($environment ?? null)) {
+        $configured = array_values(array_filter(array_map('strval', $environment)));
+    } elseif (is_string($environment ?? null) && trim($environment) !== '') {
+        $configured = [trim($environment)];
+    }
+    if ($configured !== []) {
+        $map = array_fill_keys($known, true);
+        $configured = array_values(array_filter($configured, static fn(string $e): bool => isset($map[$e])));
+    }
+    if ($configured === [] && $known !== []) {
+        return array_map('strval', $known);
+    }
+
+    return $configured;
+}
+
+function calculus_default_environment(): string
+{
+    $envs = calculus_environments();
+    foreach ($envs as $e) {
+        if (stripos($e, 'fat') !== false) {
+            return $e;
+        }
+    }
+
+    return $envs[0] ?? '';
+}
+
+function calculus_store(): ImportStore
+{
+    return new ImportStore(__DIR__ . '/data/calculus.sqlite');
+}
+
+function calculus_ensure_dirs(): void
+{
+    foreach (['uploads', 'data/packages', 'cache'] as $rel) {
+        $path = __DIR__ . '/' . $rel;
+        if (!is_dir($path)) {
+            mkdir($path, 0775, true);
+        }
+    }
+}
+
+/**
+ * @return array{path:string, name:string, sha256:string}
+ */
+function calculus_receive_upload(): array
+{
+    calculus_ensure_dirs();
+    if (!isset($_FILES['bascalc']) || !is_array($_FILES['bascalc'])) {
+        throw new InvalidArgumentException('Geen bestand geüpload.');
+    }
+    $err = (int) ($_FILES['bascalc']['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($err !== UPLOAD_ERR_OK) {
+        throw new InvalidArgumentException('Upload mislukt (code ' . $err . ').');
+    }
+    $name = (string) ($_FILES['bascalc']['name'] ?? 'upload.xlsx');
+    if (!preg_match('/\.xlsx$/i', $name)) {
+        throw new InvalidArgumentException('Alleen .xlsx toegestaan.');
+    }
+    $tmp = (string) ($_FILES['bascalc']['tmp_name'] ?? '');
+    $dest = __DIR__ . '/uploads/' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.xlsx';
+    if (!move_uploaded_file($tmp, $dest)) {
+        throw new RuntimeException('Kon upload niet opslaan.');
+    }
+
+    return [
+        'path' => $dest,
+        'name' => $name,
+        'sha256' => hash_file('sha256', $dest) ?: '',
+    ];
+}
+
+/**
+ * @return array{path:string, name:string, sha256:string}
+ */
+function calculus_fetch_ticket_attachment(int $ticketId, int $attachmentId): array
+{
+    $client = AsclepiusClient::fromGlobals();
+    if ($client === null) {
+        throw new RuntimeException('Asclepius API-key ontbreekt in auth.php ($asclepiusApiKey).');
+    }
+    calculus_ensure_dirs();
+    $atts = $client->listXlsxAttachments($ticketId);
+    $chosen = null;
+    foreach ($atts as $a) {
+        if ((int) $a['id'] === $attachmentId) {
+            $chosen = $a;
+            break;
+        }
+    }
+    if ($chosen === null) {
+        throw new InvalidArgumentException('Gekozen xlsx-bijlage niet gevonden op ticket.');
+    }
+    $dest = __DIR__ . '/uploads/ticket_' . $ticketId . '_' . $attachmentId . '_' . bin2hex(random_bytes(3)) . '.xlsx';
+    $client->downloadAttachment($attachmentId, $dest);
+
+    return [
+        'path' => $dest,
+        'name' => (string) $chosen['original_name'],
+        'sha256' => hash_file('sha256', $dest) ?: '',
+    ];
+}
+
+/** @param array<string, mixed> $parsed */
+function calculus_apply_project(array $parsed, string $projectNo): array
+{
+    foreach ($parsed['lines'] as &$line) {
+        $line['job_no'] = $projectNo;
+        if (trim((string) ($line['bin_code'] ?? '')) === '' || preg_match('/^PRJ/i', (string) $line['bin_code'])) {
+            $line['bin_code'] = $projectNo;
+        }
+    }
+    unset($line);
+    $parsed['project_hint'] = $projectNo;
+
+    return $parsed;
+}
+
+$flashError = '';
+$flashOk = '';
+$preview = null;
+$attachmentChoices = null;
+$ticketId = 0;
+
+$action = trim((string) ($_POST['action'] ?? $_GET['action'] ?? ''));
+
+try {
+    if ($action === 'list_attachments' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $ticketId = (int) ($_POST['ticket_id'] ?? 0);
+        if ($ticketId <= 0) {
+            throw new InvalidArgumentException('Vul een geldig ticketnummer in.');
+        }
+        $client = AsclepiusClient::fromGlobals();
+        if ($client === null) {
+            throw new RuntimeException('Asclepius API-key ontbreekt in auth.php ($asclepiusApiKey).');
+        }
+        $attachmentChoices = $client->listXlsxAttachments($ticketId);
+        if ($attachmentChoices === []) {
+            $flashError = 'Geen .xlsx-bijlagen gevonden op ticket #' . $ticketId . '.';
+        }
+    }
+
+    if ($action === 'preview' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $ticketId = (int) ($_POST['ticket_id'] ?? 0);
+        $attachmentId = (int) ($_POST['attachment_id'] ?? 0);
+        $projectNo = strtoupper(trim((string) ($_POST['project_no'] ?? '')));
+        $environment = trim((string) ($_POST['environment'] ?? calculus_default_environment()));
+        $company = trim((string) ($_POST['company'] ?? ($GLOBALS['calculusDefaultCompany'] ?? 'KVT')));
+        $existingMode = trim((string) ($_POST['existing_mode'] ?? 'abort'));
+
+        if ($projectNo === '' || !preg_match('/^PRJ\d+/i', $projectNo)) {
+            throw new InvalidArgumentException('Projectnummer verplicht (vorm PRJ…).');
+        }
+        if (!in_array($environment, calculus_environments(), true)) {
+            throw new InvalidArgumentException('Ongeldige environment-keuze.');
+        }
+
+        if ($ticketId > 0 && $attachmentId > 0) {
+            $file = calculus_fetch_ticket_attachment($ticketId, $attachmentId);
+        } else {
+            $file = calculus_receive_upload();
+        }
+
+        $parsed = BascalcParser::parse($file['path']);
+        $parsed = calculus_apply_project($parsed, $projectNo);
+
+        $store = calculus_store();
+        $previous = $store->findPrevious($file['sha256'], $projectNo);
+
+        $existingLines = null;
+        $existingError = null;
+        $existingTotal = null;
+        try {
+            $bc = BcAutomation::fromGlobals($environment, $company);
+            $existingLines = $bc->fetchExistingBaselineLines($projectNo);
+            $existingTotal = 0.0;
+            foreach ($existingLines as $row) {
+                $q = (float) ($row['Quantity'] ?? $row['Aantal'] ?? 0);
+                $c = (float) ($row['UnitCost'] ?? $row['Kostprijs'] ?? 0);
+                $existingTotal += $q * $c;
+            }
+            $existingTotal = round($existingTotal, 2);
+        } catch (Throwable $e) {
+            $existingError = $e->getMessage();
+        }
+
+        $token = bin2hex(random_bytes(16));
+        $_SESSION['calculus_preview'] = [
+            'token' => $token,
+            'created' => time(),
+            'file' => $file,
+            'parsed' => $parsed,
+            'project_no' => $projectNo,
+            'environment' => $environment,
+            'company' => $company,
+            'ticket_id' => $ticketId > 0 ? $ticketId : null,
+            'existing_mode' => $existingMode,
+            'existing_count' => is_array($existingLines) ? count($existingLines) : null,
+            'existing_total' => $existingTotal,
+            'existing_error' => $existingError,
+        ];
+
+        $preview = $_SESSION['calculus_preview'];
+        $preview['previous'] = $previous;
+        $preview['existing_lines'] = $existingLines;
+    }
+
+    if (in_array($action, ['confirm_package', 'confirm_apply'], true) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $token = trim((string) ($_POST['token'] ?? ''));
+        $doApply = $action === 'confirm_apply';
+        $postTicket = isset($_POST['post_ticket']);
+        $session = $_SESSION['calculus_preview'] ?? null;
+        if (!is_array($session) || !hash_equals((string) ($session['token'] ?? ''), $token)) {
+            throw new InvalidArgumentException('Preview verlopen of ongeldig. Doe opnieuw een dry-run.');
+        }
+        if ((time() - (int) ($session['created'] ?? 0)) > 3600) {
+            unset($_SESSION['calculus_preview']);
+            throw new InvalidArgumentException('Preview ouder dan 1 uur. Doe opnieuw een dry-run.');
+        }
+
+        $existingCount = (int) ($session['existing_count'] ?? 0);
+        $existingMode = (string) ($session['existing_mode'] ?? 'abort');
+        if ($existingCount > 0 && $existingMode === 'abort') {
+            throw new RuntimeException(
+                'Project heeft al ' . $existingCount . ' basislijnregel(s). Kies in de preview "Toch toevoegen" of breek af.'
+            );
+        }
+
+        $file = $session['file'];
+        $parsed = $session['parsed'];
+        $projectNo = (string) $session['project_no'];
+        $environment = (string) $session['environment'];
+        $company = (string) $session['company'];
+        $ticketId = (int) ($session['ticket_id'] ?? 0);
+
+        if (stripos($environment, 'fat') === false && !isset($_POST['confirm_live'])) {
+            throw new InvalidArgumentException('Live-environment vereist expliciete bevestiging (checkbox).');
+        }
+
+        calculus_ensure_dirs();
+        $packagePath = __DIR__ . '/data/packages/' . $projectNo . '_' . date('Ymd_His') . '.xlsx';
+        RapidStartBuilder::build(CALCULUS_TEMPLATE, $packagePath, $projectNo, $parsed['lines']);
+
+        $bcResponse = null;
+        $status = 'package_ready';
+        $notes = 'RapidStart-pakket gegenereerd; nog niet toegepast in BC.';
+
+        if ($doApply) {
+            try {
+                $bc = BcAutomation::fromGlobals($environment, $company);
+                $result = $bc->applyConfigurationPackage(RapidStartBuilder::PACKAGE_CODE, $packagePath);
+                $bcResponse = json_encode($result, JSON_UNESCAPED_UNICODE);
+                $status = 'applied';
+                $notes = 'Pakket geüpload/geïmporteerd/toegepast. Stappen: ' . implode('; ', $result['steps']);
+            } catch (Throwable $e) {
+                $bcResponse = $e->getMessage();
+                $status = 'apply_failed';
+                $notes = 'Package staat klaar op schijf, apply mislukt.';
+                $flashError = 'BC-fout (letterlijk):\n' . $e->getMessage();
+            }
+        }
+
+        $store = calculus_store();
+        $importId = $store->record([
+            'user_email' => calculus_user_email(),
+            'ticket_id' => $ticketId > 0 ? $ticketId : null,
+            'project_no' => $projectNo,
+            'environment' => $environment,
+            'company' => $company,
+            'source_filename' => (string) ($file['name'] ?? ''),
+            'file_sha256' => (string) ($file['sha256'] ?? ''),
+            'line_count' => count($parsed['lines']),
+            'excel_total' => (float) $parsed['excel_total'],
+            'bc_total' => null,
+            'status' => $status,
+            'package_path' => $packagePath,
+            'bc_response' => $bcResponse,
+            'notes' => $notes,
+        ]);
+
+        if ($postTicket && $ticketId > 0) {
+            $client = AsclepiusClient::fromGlobals();
+            if ($client !== null) {
+                $msg = sprintf(
+                    "Calculus-import #%d\nProject: %s\nEnvironment: %s\nRegels: %d\nTotaal Excel (Basislijn): € %s\nStatus: %s\nBestand: %s",
+                    $importId,
+                    $projectNo,
+                    $environment,
+                    count($parsed['lines']),
+                    number_format((float) $parsed['excel_total'], 2, ',', '.'),
+                    $status,
+                    (string) ($file['name'] ?? '')
+                );
+                try {
+                    $client->addTicketMessage($ticketId, $msg, calculus_user_email());
+                } catch (Throwable $e) {
+                    $flashError = trim($flashError . "\nTicketreactie mislukt: " . $e->getMessage());
+                }
+            }
+        }
+
+        if ($status === 'applied') {
+            $flashOk = 'Import #' . $importId . ' toegepast in BC. Pakket: ' . basename($packagePath);
+        } elseif ($status === 'package_ready') {
+            $flashOk = 'Import #' . $importId . ': pakket klaar (nog niet toegepast). Download hieronder.';
+        }
+
+        $preview = [
+            'result' => true,
+            'import_id' => $importId,
+            'status' => $status,
+            'package_path' => $packagePath,
+            'package_basename' => basename($packagePath),
+            'parsed' => $parsed,
+            'project_no' => $projectNo,
+            'environment' => $environment,
+            'bc_response' => $bcResponse,
+        ];
+        unset($_SESSION['calculus_preview']);
+    }
+
+    if ($action === 'download_package' && isset($_GET['file'])) {
+        $base = basename((string) $_GET['file']);
+        $path = __DIR__ . '/data/packages/' . $base;
+        if (!is_file($path) || !str_ends_with(strtolower($base), '.xlsx')) {
+            throw new InvalidArgumentException('Package niet gevonden.');
+        }
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $base . '"');
+        header('Content-Length: ' . (string) filesize($path));
+        readfile($path);
+        exit;
+    }
+} catch (Throwable $e) {
+    $flashError = $e->getMessage();
+}
+
+$envs = calculus_environments();
+$defaultEnv = calculus_default_environment();
+$selectedEnv = trim((string) ($_POST['environment'] ?? $defaultEnv));
+$selectedProject = strtoupper(trim((string) ($_POST['project_no'] ?? '')));
+$selectedCompany = trim((string) ($_POST['company'] ?? ($GLOBALS['calculusDefaultCompany'] ?? 'KVT')));
+$selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
+
+?>
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calculus — BASCALC → BC</title>
+  <link rel="stylesheet" href="calculus.css">
+  <link rel="icon" href="favicon.ico">
+</head>
+<body>
+<div class="wrap">
+  <header class="app-header">
+    <div>
+      <div class="tag">sleutels.kvt.nl / calculus</div>
+      <h1>Calculus</h1>
+    </div>
+    <div class="muted"><?= calculus_h(calculus_user_email()) ?></div>
+  </header>
+
+  <?php if ($flashError !== ''): ?>
+    <div class="banner err"><?= nl2br(calculus_h($flashError)) ?></div>
+  <?php endif; ?>
+  <?php if ($flashOk !== ''): ?>
+    <div class="banner ok"><?= calculus_h($flashOk) ?></div>
+  <?php endif; ?>
+
+  <div class="card">
+    <h2>1. Bron &amp; project</h2>
+    <form method="post" enctype="multipart/form-data">
+      <div class="grid">
+        <div class="field">
+          <label for="ticket_id">Asclepius-ticketnummer (optioneel)</label>
+          <input type="number" min="1" name="ticket_id" id="ticket_id" value="<?= $selectedTicket > 0 ? (int) $selectedTicket : '' ?>">
+        </div>
+        <div class="field">
+          <label for="project_no">Projectnummer</label>
+          <input type="text" name="project_no" id="project_no" required placeholder="PRJ2608376" value="<?= calculus_h($selectedProject) ?>">
+        </div>
+        <div class="field">
+          <label for="environment">Environment</label>
+          <select name="environment" id="environment">
+            <?php foreach ($envs as $env): ?>
+              <option value="<?= calculus_h($env) ?>" <?= $env === $selectedEnv ? 'selected' : '' ?>><?= calculus_h($env) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <p class="muted">Standaard FAT. Live alleen met extra bevestiging bij apply.</p>
+        </div>
+        <div class="field">
+          <label for="company">BC-bedrijf</label>
+          <input type="text" name="company" id="company" value="<?= calculus_h($selectedCompany) ?>">
+        </div>
+        <div class="field">
+          <label for="bascalc">Of upload BASCALC .xlsx</label>
+          <input type="file" name="bascalc" id="bascalc" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        </div>
+        <div class="field">
+          <label for="existing_mode">Als er al regels op het project staan</label>
+          <select name="existing_mode" id="existing_mode">
+            <option value="abort">Afbreken (veilig)</option>
+            <option value="add">Toch toevoegen (geen auto-delete)</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="submit" name="action" value="list_attachments" class="secondary">Toon xlsx-bijlagen van ticket</button>
+        <button type="submit" name="action" value="preview">Dry-run / preview</button>
+      </div>
+    </form>
+
+    <?php if (is_array($attachmentChoices)): ?>
+      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+      <h2>Kies bijlage van ticket #<?= (int) $selectedTicket ?></h2>
+      <?php if ($attachmentChoices === []): ?>
+        <p class="muted">Geen xlsx-bijlagen.</p>
+      <?php else: ?>
+        <form method="post" enctype="multipart/form-data">
+          <input type="hidden" name="ticket_id" value="<?= (int) $selectedTicket ?>">
+          <input type="hidden" name="project_no" value="<?= calculus_h($selectedProject) ?>">
+          <input type="hidden" name="environment" value="<?= calculus_h($selectedEnv) ?>">
+          <input type="hidden" name="company" value="<?= calculus_h($selectedCompany) ?>">
+          <input type="hidden" name="existing_mode" value="<?= calculus_h((string) ($_POST['existing_mode'] ?? 'abort')) ?>">
+          <div class="field">
+            <label for="attachment_id">xlsx-bijlage</label>
+            <select name="attachment_id" id="attachment_id" required>
+              <?php foreach ($attachmentChoices as $att): ?>
+                <option value="<?= (int) $att['id'] ?>">
+                  #<?= (int) $att['id'] ?> — <?= calculus_h($att['original_name']) ?>
+                  (<?= (int) $att['file_size'] ?> bytes)
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <button type="submit" name="action" value="preview">Preview met deze bijlage</button>
+        </form>
+      <?php endif; ?>
+    <?php endif; ?>
+  </div>
+
+  <?php if (is_array($preview) && empty($preview['result'])): ?>
+    <?php
+      $parsed = $preview['parsed'];
+      $lines = $parsed['lines'];
+      $previous = $preview['previous'] ?? [];
+      $existingLines = $preview['existing_lines'] ?? null;
+    ?>
+    <div class="card">
+      <h2>2. Dry-run preview</h2>
+      <div class="stats">
+        <div class="stat"><strong><?= count($lines) ?></strong><span>regels</span></div>
+        <div class="stat"><strong>€ <?= calculus_h(number_format((float) $parsed['excel_total'], 2, ',', '.')) ?></strong><span>totaal Basislijn (Excel)</span></div>
+        <div class="stat"><strong><?= calculus_h((string) $preview['project_no']) ?></strong><span>project</span></div>
+        <div class="stat"><strong><?= calculus_h((string) $preview['environment']) ?></strong><span>environment</span></div>
+      </div>
+
+      <?php if (!empty($parsed['warnings'])): ?>
+        <?php foreach ($parsed['warnings'] as $w): ?>
+          <div class="banner warn"><?= calculus_h((string) $w) ?></div>
+        <?php endforeach; ?>
+      <?php endif; ?>
+
+      <?php if (!empty($previous)): ?>
+        <div class="banner warn">
+          Dit bestand (zelfde hash) is eerder al op dit project geladen:
+          <?php foreach ($previous as $p): ?>
+            <br>#<?= (int) $p['id'] ?> — <?= calculus_h((string) $p['created_at']) ?>
+            door <?= calculus_h((string) $p['user_email']) ?>
+            (<?= calculus_h((string) $p['status']) ?>)
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php if (!empty($preview['existing_error'])): ?>
+        <div class="banner warn">
+          Bestaande BC-regels konden niet worden opgehaald (OData entity mogelijk niet gepubliceerd):
+          <br><?= calculus_h((string) $preview['existing_error']) ?>
+        </div>
+      <?php elseif (is_array($existingLines)): ?>
+        <?php if ($existingLines === []): ?>
+          <div class="banner ok">Geen bestaande basislijnregels gevonden op dit project (via OData).</div>
+        <?php else: ?>
+          <div class="banner warn">
+            <?= count($existingLines) ?> bestaande regel(s) op project,
+            geschat totaal € <?= calculus_h(number_format((float) ($preview['existing_total'] ?? 0), 2, ',', '.')) ?>.
+            Calculus verwijdert of overschrijft niets automatisch.
+            Gekozen modus: <strong><?= calculus_h((string) $preview['existing_mode']) ?></strong>.
+          </div>
+        <?php endif; ?>
+      <?php endif; ?>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Taak</th><th>Regel</th><th>Soort</th><th>Nr.</th><th>Omschrijving</th>
+              <th class="num">Aantal</th><th class="num">Kostprijs</th><th class="num">Totaal</th>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($lines as $line): ?>
+            <tr class="<?= ((float) $line['line_total'] == 0.0) ? 'zero' : '' ?>">
+              <td><?= calculus_h((string) $line['job_task_no']) ?></td>
+              <td><?= calculus_h((string) $line['line_no']) ?></td>
+              <td><?= calculus_h((string) $line['type']) ?></td>
+              <td><?= calculus_h((string) $line['no']) ?></td>
+              <td><?= calculus_h((string) $line['description']) ?></td>
+              <td class="num"><?= calculus_h(number_format((float) $line['quantity'], 4, ',', '.')) ?></td>
+              <td class="num"><?= calculus_h(number_format((float) $line['unit_cost'], 4, ',', '.')) ?></td>
+              <td class="num"><?= calculus_h(number_format((float) $line['line_total'], 2, ',', '.')) ?></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+
+      <form method="post" style="margin-top:16px">
+        <input type="hidden" name="token" value="<?= calculus_h((string) $preview['token']) ?>">
+        <?php if (stripos((string) $preview['environment'], 'fat') === false): ?>
+          <div class="live-warn">
+            <label>
+              <input type="checkbox" name="confirm_live" value="1" required>
+              Ik bevestig dat ik op <strong>live</strong>-environment
+              <code><?= calculus_h((string) $preview['environment']) ?></code> wil schrijven.
+            </label>
+          </div>
+        <?php endif; ?>
+        <div class="field" style="margin-top:10px">
+          <label><input type="checkbox" name="post_ticket" value="1" <?= !empty($preview['ticket_id']) ? 'checked' : '' ?>>
+            Plaats resultaat als reactie op Asclepius-ticket
+            <?= !empty($preview['ticket_id']) ? '#' . (int) $preview['ticket_id'] : '(geen ticket)' ?>
+          </label>
+        </div>
+        <div class="actions">
+          <button type="submit" name="action" value="confirm_package" class="secondary">Alleen pakket bouwen (download)</button>
+          <button type="submit" name="action" value="confirm_apply">Bevestig: bouw + apply in BC</button>
+        </div>
+        <p class="muted">Apply gebruikt Automation API configurationPackages. Als upload/import/apply faalt, blijft het gegenereerde pakket downloadbaar.</p>
+      </form>
+    </div>
+  <?php endif; ?>
+
+  <?php if (is_array($preview) && !empty($preview['result'])): ?>
+    <div class="card">
+      <h2>3. Resultaat</h2>
+      <div class="stats">
+        <div class="stat"><strong>#<?= (int) $preview['import_id'] ?></strong><span>import-id</span></div>
+        <div class="stat"><strong><?= calculus_h((string) $preview['status']) ?></strong><span>status</span></div>
+        <div class="stat"><strong><?= count($preview['parsed']['lines']) ?></strong><span>regels</span></div>
+        <div class="stat"><strong>€ <?= calculus_h(number_format((float) $preview['parsed']['excel_total'], 2, ',', '.')) ?></strong><span>Excel-totaal</span></div>
+      </div>
+      <p>
+        <a class="btn" href="?action=download_package&amp;file=<?= rawurlencode((string) $preview['package_basename']) ?>">
+          Download RapidStart-pakket
+        </a>
+      </p>
+      <?php if (!empty($preview['bc_response'])): ?>
+        <pre style="white-space:pre-wrap;background:#f8fafc;border:1px solid var(--line);padding:12px;border-radius:8px;font-size:12px"><?= calculus_h((string) $preview['bc_response']) ?></pre>
+      <?php endif; ?>
+      <p class="muted">Terugdraaien: handmatig in BC (basislijnregels / change order) of opnieuw importeren met gecorrigeerd pakket. Calculus wist geen regels.</p>
+    </div>
+  <?php endif; ?>
+</div>
+</body>
+</html>

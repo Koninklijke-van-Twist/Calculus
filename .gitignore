@@ -1,0 +1,9 @@
+web/auth.php
+web/cache/**
+web/uploads/**
+web/data/**
+!web/data/.gitkeep
+!web/cache/.gitkeep
+!web/uploads/.gitkeep
+!web/data/packages/
+!web/data/packages/.gitkeep

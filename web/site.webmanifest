@@ -1,0 +1,10 @@
+{
+  "name": "Calculus",
+  "short_name": "Calculus",
+  "icons": [
+    { "src": "favicon-32x32.png", "sizes": "32x32", "type": "image/png" }
+  ],
+  "display": "standalone",
+  "background_color": "#eef2f7",
+  "theme_color": "#1f4ea6"
+}
