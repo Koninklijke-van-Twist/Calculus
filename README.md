@@ -8,12 +8,11 @@ Live: `https://sleutels.kvt.nl/calculus/` ← `web/` → `/var/www/html/calculus
 
 ICT-medewerker:
 
-1. Kiest Asclepius-ticket (xlsx-bijlage) of uploadt een BASCALC-`.xlsx`
+1. Uploadt een BASCALC-`.xlsx`
 2. Vult projectnummer in (`PRJ…`)
 3. Kiest het BC-bedrijf (de omgeving volgt uit dat bedrijf; zie [docs/COMPANIES.md](docs/COMPANIES.md))
-4. Ziet dry-run: geparste regels, totalen, eventuele bestaande BC-regels, hash-waarschuwing
-5. Bevestigt expliciet → RapidStart-pakket bouwen, optioneel Automation API apply
-6. Krijgt resultaat + optionele ticketreactie
+4. Ziet een voorbeeld: geparste regels, totalen, eventuele bestaande BC-regels, hash-waarschuwing
+5. Bevestigt → RapidStart-pakket downloaden of Automation API apply in BC
 
 ## Gekozen route
 
@@ -37,7 +36,6 @@ web/
   lib/BascalcParser.php
   lib/RapidStartBuilder.php
   lib/ImportStore.php    SQLite audit + idempotentie
-  lib/AsclepiusClient.php
   lib/BcAutomation.php   Automation API + OData-preview
   lib/CompanyCatalog.php bedrijvenlijst en bedrijf → environment
   templates/NEWBUILD_CALCULATIE_template.xlsx
@@ -49,7 +47,7 @@ web/
 ```bash
 cp web/auth_TEMPLATE.php web/auth.php
 # vul $auth_list, $environment (actieve databases), $allowedUsers (ICT)
-# optioneel $asclepiusApiKey, $mimirApi (bedrijvenlijst), $calculusDefaultCompany
+# optioneel $mimirApi (bedrijvenlijst), $calculusDefaultCompany, $calculusBaselineODataEntities
 ```
 
 FTP-secrets op de GitHub-repo (zoals andere sleutels-apps):
@@ -68,6 +66,6 @@ Calculus **verwijdert nooit** bestaande regels. Terugdraaien gebeurt handmatig i
 ## Beperkingen / open
 
 - Live BC apply hangt af van Automation API-rechten op de service-account en exacte upload-endpoints van jullie NST-versie; faalt apply, dan blijft het pakket downloadbaar voor handmatige import.
-- OData-preview van bestaande regels vereist een gepubliceerde page/API op de LVS-tabel; anders zie je een waarschuwing i.p.v. de lijst.
+- OData-preview van bestaande regels vereist een gepubliceerde Web Service op tabel `11332917`; anders zie je een korte waarschuwing (voorbeeld/download gaan door).
 - BASCALC moet gecachete Excel-waarden hebben (bestand ooit in Excel geopend/opgeslagen). Formules zonder cache → harde fout.
 - Naam **Daedalus** was al bezet (werkorders); deze app heet **Calculus**.

@@ -1,5 +1,11 @@
 <?php
 
+// Altijd sessie starten: dry-run preview + download hangen hiervan af,
+// ook op localhost waar SSO wordt overgeslagen.
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
+
 function is_trusted_requester(): bool
 {
     $remote = $_SERVER['REMOTE_ADDR'] ?? '';
@@ -15,7 +21,14 @@ function is_trusted_requester(): bool
     return false;
 }
 
-if (!is_trusted_requester()) {
+if (is_trusted_requester()) {
+    if (!isset($_SESSION['user']) || !is_array($_SESSION['user'])) {
+        $_SESSION['user'] = [
+            'email' => 'local@dev',
+            'name' => 'Local Dev',
+        ];
+    }
+} else {
     require __DIR__ . '/../login/lib.php';
 
     if (

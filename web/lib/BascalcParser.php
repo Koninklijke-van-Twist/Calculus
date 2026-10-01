@@ -2,7 +2,8 @@
 
 /**
  * Strikte parser voor BASCALC-xlsx: leest alleen tabblad "Invoer BC".
- * Gebruikt gecachete celwaarden (zoals Excel ze opslaat). Zonder cache → fout.
+ * Gebruikt gecachete celwaarden (zoals Excel ze opslaat). Formule zonder <v> → fout.
+ * Lege style-only cellen (<c .../>) worden ondersteund; die mogen Aantal/Kostprijs niet "opeten".
  */
 final class BascalcParser
 {
@@ -344,18 +345,34 @@ final class BascalcParser
         }
 
         $cells = [];
-        if (!preg_match_all('/<(?:\w+:)?c\b([^>]*)>(.*?)<\/(?:\w+:)?c>/s', $xml, $matches, PREG_SET_ORDER)) {
+        // Match both paired <c>...</c> and self-closing <c .../> (empty styled cells).
+        // The old paired-only regex treated "/>" as attrs + ">" and swallowed the next cell,
+        // so Aantal after an empty Werksoort vanished (false "geen gecachete Excel-waarde").
+        if (!preg_match_all(
+            '/<(?:\w+:)?c\b([^>]*?)(?:\/>|>(.*?)<\/(?:\w+:)?c>)/s',
+            $xml,
+            $matches,
+            PREG_SET_ORDER
+        )) {
             return [];
         }
 
         foreach ($matches as $match) {
             $attrs = $match[1];
-            $inner = $match[2];
+            $inner = $match[2] ?? '';
+            $selfClosing = !array_key_exists(2, $match) || $match[2] === null;
             if (!preg_match('/\br="([A-Z]+)(\d+)"/', $attrs, $rm)) {
                 continue;
             }
             $col = self::colLettersToIndex($rm[1]);
             $row = (int) $rm[2];
+
+            if ($selfClosing || $inner === '') {
+                // Style-only empty cell (common for Werksoort on Artikel-regels)
+                $cells[$row][$col] = '';
+                continue;
+            }
+
             $type = '';
             if (preg_match('/\bt="([^"]*)"/', $attrs, $tm)) {
                 $type = $tm[1];
