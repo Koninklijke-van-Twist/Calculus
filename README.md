@@ -37,7 +37,8 @@ web/
   lib/RapidStartBuilder.php
   lib/ImportStore.php    SQLite audit + idempotentie
   lib/AsclepiusClient.php
-  lib/BcAutomation.php   Automation API + OData-preview
+  lib/BcAutomation.php   Automation API + OData-preview (Mímir, anders eigen OData)
+  lib/MimirClient.php    Mímir query-client en circuit breaker
   templates/NEWBUILD_CALCULATIE_template.xlsx
   data/                  runtime (sqlite, packages) — niet in git
 ```
@@ -48,6 +49,8 @@ web/
 cp web/auth_TEMPLATE.php web/auth.php
 # vul $auth_list, $allowedUsers (ICT), optioneel $asclepiusApiKey, $mimirApi
 ```
+
+`$mimirApi` en de BC-credentials horen naast elkaar. Staat de key er, dan leest de preview van bestaande basislijnregels eerst Mímir (`query.php`, `max_age` 600, `$top` 500, filter `JobNo`). Faalt die aanroep, dan dezelfde read via de eigen OData van de gekozen environment (`$baseUrl` / `$auth_list`). Na die eerste fout slaat dit PHP-verzoek Mímir over. Wijkt `meta.environment` af van de gekozen environment, dan ook eigen OData, zonder het circuit te openen. Zonder `$mimirApi` verandert het directe OData-pad niet. Ontbreken bruikbare BC-credentials, dan komt de oorspronkelijke Mímir-fout terug. Pakket-apply blijft de Automation API; dat is geen OData-read.
 
 FTP-secrets op de GitHub-repo (zoals andere sleutels-apps):
 
@@ -65,6 +68,6 @@ Calculus **verwijdert nooit** bestaande regels. Terugdraaien gebeurt handmatig i
 ## Beperkingen / open
 
 - Live BC apply hangt af van Automation API-rechten op de service-account en exacte upload-endpoints van jullie NST-versie; faalt apply, dan blijft het pakket downloadbaar voor handmatige import.
-- OData-preview van bestaande regels vereist een gepubliceerde page/API op de LVS-tabel; anders zie je een waarschuwing i.p.v. de lijst.
+- OData-preview van bestaande regels probeert eerst Mímir (twee entity-namen: `Projectbasislijnregel`, daarna `LVS_JobChngeOrderBudgetLne`). Een 404 op de eerste naam probeert de tweede nog via Mímir; andere Mímir-fouten vallen meteen terug op eigen OData. Zonder gepubliceerde page/API zie je een waarschuwing i.p.v. de lijst.
 - BASCALC moet gecachete Excel-waarden hebben (bestand ooit in Excel geopend/opgeslagen). Formules zonder cache → harde fout.
 - Naam **Daedalus** was al bezet (werkorders); deze app heet **Calculus**.

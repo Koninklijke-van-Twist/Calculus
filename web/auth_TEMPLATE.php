@@ -42,7 +42,14 @@ $ictUsers = $allowedUsers;
 // $asclepiusApiKey = '…';
 // $asclepiusBase = 'https://sleutels.kvt.nl/asclepius';
 
-// Optioneel: Mímir voor lezen van bestaande projectregels
+// Mímir voor het lezen van bestaande projectbasislijnregels (OData).
+// Zet $mimirApi én de BC-credentials hierboven naast elkaar.
+// Met $mimirApi gaan die reads eerst naar Mímir. Geeft Mímir een fout
+// (verbinding/timeout, non-2xx, ongeldige JSON of een foutpayload), dan
+// leest Calculus dezelfde regels via de eigen OData van de gekozen environment
+// en slaat Mímir voor de rest van dat PHP-verzoek over.
+// Zonder $mimirApi blijft alleen die directe OData actief.
+// Automation API (company-GUID, pakket apply) gaat nooit via Mímir.
 // $mimirApi = 'mimir_…';
 // $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 

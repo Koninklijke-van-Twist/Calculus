@@ -1,10 +1,17 @@
 <?php
 
+require_once __DIR__ . '/MimirClient.php';
+
 /**
  * Business Central Automation API — configuratiepakketten.
  *
  * Live apply vereist werkende credentials in auth.php en bereikbare NST.
  * Zonder dat: alleen package-bestand genereren (dry-run download).
+ *
+ * OData-reads (bestaande basislijnregels) gaan via Mímir als $mimirApi gezet is,
+ * en vallen terug op deze klasse haar eigen OData als Mímir een fout geeft.
+ * Automation API (company-GUID, pakket upload/import/apply) blijft altijd direct
+ * naar BC: Mímir is een leescache en kent die schrijfacties niet.
  */
 final class BcAutomation
 {
@@ -17,6 +24,15 @@ final class BcAutomation
         $this->baseUrl = rtrim($baseUrl, '/');
         $this->environment = trim($environment);
     }
+
+    /**
+     * Waar de laatste geslaagde (of laatste geprobeerde) basislijn-read vandaan kwam:
+     * mimir, odata, odata-fallback, odata-environment.
+     */
+    private string $baselineSource = 'odata';
+
+    /** @var callable(string): array<string, mixed>|null */
+    public static $odataTransport = null;
 
     public static function fromGlobals(string $environment, string $companyName): self
     {
@@ -74,25 +90,106 @@ final class BcAutomation
         throw new RuntimeException('Company niet gevonden via Automation API: ' . $this->companyName);
     }
 
+    public function baselineReadSource(): string
+    {
+        return $this->baselineSource;
+    }
+
     /**
-     * Probeert bestaande basislijnregels te lezen via OData (als gepubliceerd).
-     * Faalt hard met duidelijke melding als het entity-set niet bestaat.
+     * Bestaande basislijnregels. Met $mimirApi eerst Mímir, anders (of na een
+     * Mímir-fout) de eigen OData-route hieronder.
      *
      * @return list<array<string, mixed>>
      */
     public function fetchExistingBaselineLines(string $jobNo): array
     {
-        $candidates = [
-            "Company('" . $this->odataEscape($this->companyName) . "')/Projectbasislijnregel",
-            "Company('" . $this->odataEscape($this->companyName) . "')/LVS_JobChngeOrderBudgetLne",
-        ];
+        $this->baselineSource = 'odata';
+        if (!MimirClient::enabled()) {
+            return $this->fetchExistingBaselineLinesDirect($jobNo);
+        }
+
+        if (MimirClient::circuitOpen()) {
+            if (!$this->bcCredentialsUsable()) {
+                $previous = MimirClient::lastError();
+                if ($previous instanceof Throwable) {
+                    throw $previous;
+                }
+                throw new RuntimeException('Mímir eerder mislukt.');
+            }
+            $this->baselineSource = 'odata-fallback';
+
+            return $this->fetchExistingBaselineLinesDirect($jobNo);
+        }
+
+        $lastFailure = null;
+        foreach ($this->baselineEntityNames() as $entity) {
+            try {
+                $response = $this->mimirBaselineQuery($entity, $jobNo);
+            } catch (Throwable $e) {
+                if (!MimirClient::isFailure($e)) {
+                    throw $e;
+                }
+                $lastFailure = $e;
+                if (!MimirClient::isEntityMiss($e)) {
+                    break;
+                }
+                continue;
+            }
+
+            $reported = '';
+            $meta = $response['meta'] ?? null;
+            if (is_array($meta)) {
+                $reported = trim((string) ($meta['environment'] ?? ''));
+            }
+            if ($reported !== '' && strcasecmp($reported, $this->environment) !== 0) {
+                MimirClient::logEnvironmentMismatch($reported, $this->environment, $this->companyName, $this->mimirLogSecrets());
+                $this->baselineSource = 'odata-environment';
+
+                return $this->fetchExistingBaselineLinesDirectExplained(
+                    $jobNo,
+                    'Mímir antwoordde voor environment ' . $reported
+                    . ' in plaats van ' . $this->environment . '.'
+                );
+            }
+
+            $rows = $response['value'] ?? [];
+            $this->baselineSource = 'mimir';
+
+            return is_array($rows) ? $rows : [];
+        }
+
+        if (!$lastFailure instanceof Throwable) {
+            return $this->fetchExistingBaselineLinesDirect($jobNo);
+        }
+
+        MimirClient::trip($lastFailure);
+        if (!$this->bcCredentialsUsable()) {
+            throw $lastFailure;
+        }
+        MimirClient::logFallback($lastFailure, $this->mimirLogSecrets());
+        $this->baselineSource = 'odata-fallback';
+
+        return $this->fetchExistingBaselineLinesDirectExplained(
+            $jobNo,
+            'Mímir: ' . $lastFailure->getMessage()
+        );
+    }
+
+    /**
+     * Eigen OData, zonder Mímir. Eerste entity die HTTP-succes geeft wint,
+     * ook als die lijst leeg is.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function fetchExistingBaselineLinesDirect(string $jobNo): array
+    {
         $lastError = '';
-        foreach ($candidates as $entity) {
-            $url = $this->odataRoot() . '/' . $entity
+        foreach ($this->baselineEntityNames() as $entity) {
+            $url = $this->odataRoot() . "/Company('" . $this->odataEscape($this->companyName) . "')/" . $entity
                 . '?$filter=JobNo eq \'' . $this->odataEscape($jobNo) . '\''
                 . '&$top=500';
             try {
-                $json = $this->requestJson('GET', $url);
+                $json = $this->odataGetJson($url);
                 $rows = $json['value'] ?? [];
 
                 return is_array($rows) ? $rows : [];
@@ -105,6 +202,112 @@ final class BcAutomation
             'Kon bestaande basislijnregels niet lezen via OData. '
             . 'Entity mogelijk niet gepubliceerd. Laatste fout: ' . $lastError
         );
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function fetchExistingBaselineLinesDirectExplained(string $jobNo, string $prefix): array
+    {
+        try {
+            return $this->fetchExistingBaselineLinesDirect($jobNo);
+        } catch (Throwable $directError) {
+            throw new RuntimeException($prefix . ' Directe OData: ' . $directError->getMessage(), 0, $directError);
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function baselineEntityNames(): array
+    {
+        return [
+            'Projectbasislijnregel',
+            'LVS_JobChngeOrderBudgetLne',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function mimirBaselineQuery(string $entity, string $jobNo): array
+    {
+        return MimirClient::query($this->companyName, $entity, [
+            'filter' => 'JobNo eq \'' . $this->odataEscape($jobNo) . '\'',
+            'top' => 500,
+            'max_age' => 600,
+        ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function odataGetJson(string $url): array
+    {
+        if (is_callable(self::$odataTransport)) {
+            $json = (self::$odataTransport)($url);
+            if (!is_array($json)) {
+                throw new RuntimeException('OData-transport gaf geen array.');
+            }
+
+            return $json;
+        }
+
+        return $this->requestJson('GET', $url);
+    }
+
+    private function bcCredentialsUsable(): bool
+    {
+        if (trim($this->baseUrl) === '' || trim($this->environment) === '') {
+            return false;
+        }
+        $user = trim((string) ($this->auth['user'] ?? ''));
+        if ($user === '') {
+            return false;
+        }
+        $mode = (string) ($this->auth['mode'] ?? 'basic');
+        if ($mode === '') {
+            $mode = 'basic';
+        }
+        if ($mode !== 'basic' && $mode !== 'ntlm') {
+            return false;
+        }
+
+        return array_key_exists('pass', $this->auth);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function mimirLogSecrets(): array
+    {
+        $secrets = [];
+        $apiKey = MimirClient::apiKey();
+        if ($apiKey !== '') {
+            $secrets[] = $apiKey;
+        }
+        $ownPass = $this->auth['pass'] ?? null;
+        if (is_string($ownPass) && $ownPass !== '') {
+            $secrets[] = $ownPass;
+        }
+        global $auth, $auth_list;
+        if (isset($auth) && is_array($auth)) {
+            $pass = $auth['pass'] ?? null;
+            if (is_string($pass) && $pass !== '') {
+                $secrets[] = $pass;
+            }
+        }
+        if (isset($auth_list) && is_array($auth_list)) {
+            foreach ($auth_list as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $pass = $entry['pass'] ?? null;
+                if (is_string($pass) && $pass !== '') {
+                    $secrets[] = $pass;
+                }
+            }
+        }
+
+        return $secrets;
     }
 
     /**

@@ -21,6 +21,16 @@ function calculus_h(?string $value): string
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
+function calculus_existing_via(?string $source): string
+{
+    return match ($source) {
+        'mimir' => 'via Mímir',
+        'odata-fallback' => 'via directe OData, nadat Mímir een fout gaf',
+        'odata-environment' => 'via directe OData; Mímir hoort bij een ander environment',
+        default => 'via OData',
+    };
+}
+
 function calculus_user_email(): string
 {
     return strtolower(trim((string) ($_SESSION['user']['email'] ?? 'unknown@local')));
@@ -205,9 +215,12 @@ try {
         $existingLines = null;
         $existingError = null;
         $existingTotal = null;
+        $existingSource = null;
+        $bc = null;
         try {
             $bc = BcAutomation::fromGlobals($environment, $company);
             $existingLines = $bc->fetchExistingBaselineLines($projectNo);
+            $existingSource = $bc->baselineReadSource();
             $existingTotal = 0.0;
             foreach ($existingLines as $row) {
                 $q = (float) ($row['Quantity'] ?? $row['Aantal'] ?? 0);
@@ -217,6 +230,9 @@ try {
             $existingTotal = round($existingTotal, 2);
         } catch (Throwable $e) {
             $existingError = $e->getMessage();
+            if ($bc instanceof BcAutomation) {
+                $existingSource = $bc->baselineReadSource();
+            }
         }
 
         $token = bin2hex(random_bytes(16));
@@ -233,6 +249,7 @@ try {
             'existing_count' => is_array($existingLines) ? count($existingLines) : null,
             'existing_total' => $existingTotal,
             'existing_error' => $existingError,
+            'existing_source' => $existingSource,
         ];
 
         $preview = $_SESSION['calculus_preview'];
@@ -511,16 +528,17 @@ $selectedTicket = (int) ($_POST['ticket_id'] ?? $ticketId);
 
       <?php if (!empty($preview['existing_error'])): ?>
         <div class="banner warn">
-          Bestaande BC-regels konden niet worden opgehaald (OData entity mogelijk niet gepubliceerd):
+          Bestaande BC-regels konden niet worden opgehaald (<?= calculus_h(calculus_existing_via(isset($preview['existing_source']) ? (string) $preview['existing_source'] : null)) ?>):
           <br><?= calculus_h((string) $preview['existing_error']) ?>
         </div>
       <?php elseif (is_array($existingLines)): ?>
         <?php if ($existingLines === []): ?>
-          <div class="banner ok">Geen bestaande basislijnregels gevonden op dit project (via OData).</div>
+          <div class="banner ok">Geen bestaande basislijnregels gevonden op dit project (<?= calculus_h(calculus_existing_via(isset($preview['existing_source']) ? (string) $preview['existing_source'] : null)) ?>).</div>
         <?php else: ?>
           <div class="banner warn">
             <?= count($existingLines) ?> bestaande regel(s) op project,
-            geschat totaal € <?= calculus_h(number_format((float) ($preview['existing_total'] ?? 0), 2, ',', '.')) ?>.
+            geschat totaal € <?= calculus_h(number_format((float) ($preview['existing_total'] ?? 0), 2, ',', '.')) ?>
+            (<?= calculus_h(calculus_existing_via(isset($preview['existing_source']) ? (string) $preview['existing_source'] : null)) ?>).
             Calculus verwijdert of overschrijft niets automatisch.
             Gekozen modus: <strong><?= calculus_h((string) $preview['existing_mode']) ?></strong>.
           </div>
