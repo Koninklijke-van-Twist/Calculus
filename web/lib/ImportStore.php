@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Audit-log + idempotentie (bestandshash + project).
+ * Audit-log + hash-waarschuwing (bestandshash + project). Blokkeert imports niet.
  */
 final class ImportStore
 {

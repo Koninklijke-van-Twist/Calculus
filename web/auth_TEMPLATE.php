@@ -3,7 +3,7 @@
  * Kopieer naar web/auth.php (niet in git).
  *
  * Zelfde model als Demeter / Medusa / Mímir:
- * - $baseUrl is alleen de host
+ * - $baseUrl is alleen de host (https://…:7148), zonder environment-pad
  * - elke BC-instance is een sleutel in $auth_list
  * - $environment is de lijst databases waarvan bedrijven in de dropdown komen
  *
@@ -49,9 +49,8 @@ $allowedUsers = [
 
 $ictUsers = $allowedUsers;
 
-// Optioneel: Asclepius service-key voor tickets/bijlagen/reacties
-// $asclepiusApiKey = '…';
-// $asclepiusBase = 'https://sleutels.kvt.nl/asclepius';
+// Exacte BC company-naam (geen "KVT" op live/FAT; wel "Koninklijke van Twist")
+$calculusDefaultCompany = 'Koninklijke van Twist';
 
 // Mímir ($mimirApi), naast de BC-credentials hierboven:
 // - bedrijvenlijst via GET /companies.php (name + environment). Zonder sleutel
@@ -66,5 +65,6 @@ $ictUsers = $allowedUsers;
 // $mimirApi = 'mimir_…';
 // $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 
-// Voorkeursbedrijf in de dropdown. Moet in de ontdekte lijst staan.
-// $calculusDefaultCompany = 'KVT';
+// Optioneel: OData Service Name(s) nadat BC-beheer de page heeft gepubliceerd.
+// Zelfde lijst voor de Mímir-read en voor de eigen OData-fallback.
+// $calculusBaselineODataEntities = ['LVS_JobChngeOrderBudgetLne'];

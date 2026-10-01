@@ -138,7 +138,7 @@ if ($plain[0]['Quantity'] !== 2) {
 if (MimirClient::circuitOpen()) {
     mimir_fail('circuit mag niet open zonder Mímir');
 }
-$expectedDirect = "https://bc.example/kvtmdlive_fat/ODataV4/Company('KVT')/Projectbasislijnregel?\$filter=JobNo eq 'PRJ1'&\$top=500";
+$expectedDirect = "https://bc.example/kvtmdlive_fat/ODataV4/Company('KVT')/Projectbasislijnregel?%24filter=Job_No%20eq%20%27PRJ1%27&%24top=500";
 if ($odataUrls[0] !== $expectedDirect) {
     mimir_fail('eigen OData-URL wijkt af: ' . $odataUrls[0]);
 }
@@ -349,8 +349,11 @@ try {
     mimir_fail('dubbele fout moet gooien');
 } catch (RuntimeException $e) {
     $message = $e->getMessage();
-    if (strpos($message, 'Mímir HTTP 503') === false || strpos($message, 'Directe OData:') === false || strpos($message, 'BC HTTP 501') === false) {
+    if (strpos($message, 'Mímir HTTP 503') === false || strpos($message, 'Directe OData:') === false || strpos($message, 'OData niet beschikbaar') === false) {
         mimir_fail('samengevoegde fout mist een kant: ' . $message);
+    }
+    if (strpos(mimir_log(), 'BC HTTP 501') === false) {
+        mimir_fail('OData-detail staat niet in de log');
     }
 }
 
