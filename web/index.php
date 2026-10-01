@@ -214,7 +214,7 @@ try {
             $existingTotal = 0.0;
             foreach ($existingLines as $row) {
                 $q = (float) ($row['Quantity'] ?? $row['Aantal'] ?? 0);
-                $c = (float) ($row['UnitCost'] ?? $row['Kostprijs'] ?? 0);
+                $c = (float) ($row['Unit_Cost'] ?? $row['UnitCost'] ?? $row['Kostprijs'] ?? 0);
                 $existingTotal += $q * $c;
             }
             $existingTotal = round($existingTotal, 2);
