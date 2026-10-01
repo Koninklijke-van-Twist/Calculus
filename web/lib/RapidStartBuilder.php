@@ -71,9 +71,8 @@ final class RapidStartBuilder
 
     /**
      * Herschrijf als zip die BC/.NET accepteert.
-     * PHP ZipArchive::CM_DEFLATE zet general-purpose flag 0x0002 ("maximum"),
-     * wat System.IO.Compression weigert met "unsupported compression method".
-     * CM_STORE (methode 0, flag 0) is wel veilig — RapidStart blijft geldige xlsx.
+     * PHP ZipArchive::CM_DEFLATE zet flag 0x0002; CM_STORE weigert BC soms ook.
+     * Handmatige writer: method 8 (Deflate), flag 0 —zelfde als Excel/BC-export.
      *
      * @param array<string, string> $entries
      */
@@ -81,15 +80,91 @@ final class RapidStartBuilder
     {
         $tmp = $path . '.tmp';
         @unlink($tmp);
-        $out = new ZipArchive();
-        if ($out->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
-            throw new RuntimeException('Kon tijdelijke RapidStart-zip niet maken.');
-        }
+        $localParts = [];
+        $centralParts = [];
+        $offset = 0;
+        $now = getdate();
+        // DOS time/date
+        $dosTime = ((int) $now['hours'] << 11) | ((int) $now['minutes'] << 5) | (((int) $now['seconds']) >> 1);
+        $dosDate = ((((int) $now['year'] - 1980) << 9) | ((int) $now['mon'] << 5) | (int) $now['mday']);
+
         foreach ($entries as $name => $data) {
-            $out->addFromString($name, $data);
-            $out->setCompressionName($name, ZipArchive::CM_STORE);
+            if (!is_string($data)) {
+                throw new RuntimeException('Ongeldige zip-entry: ' . $name);
+            }
+            $nameBytes = $name;
+            // ZIP paths use forward slashes; UTF-8 names OK with flag bit 11 but we keep ASCII paths
+            $compressed = gzdeflate($data, 6);
+            if ($compressed === false) {
+                throw new RuntimeException('gzdeflate mislukt voor ' . $name);
+            }
+            $crc = crc32($data);
+            if ($crc < 0) {
+                // crc32 can be signed on 32-bit; force unsigned 32-bit
+                $crc = $crc & 0xFFFFFFFF;
+            }
+            $csize = strlen($compressed);
+            $usize = strlen($data);
+            $nlen = strlen($nameBytes);
+
+            $local = pack(
+                'VvvvvvVVVvv',
+                0x04034b50, // local sig
+                20,         // version needed
+                0,          // flag (geen data-descriptor, geen "max deflate")
+                8,          // method Deflate
+                $dosTime,
+                $dosDate,
+                $crc,
+                $csize,
+                $usize,
+                $nlen,
+                0           // extra len
+            ) . $nameBytes . $compressed;
+
+            $centralParts[] = pack(
+                'VvvvvvvVVVvvvvvVV',
+                0x02014b50, // central sig
+                20,         // version made by
+                20,         // version needed
+                0,          // flag
+                8,          // method
+                $dosTime,
+                $dosDate,
+                $crc,
+                $csize,
+                $usize,
+                $nlen,
+                0,          // extra
+                0,          // comment
+                0,          // disk start
+                0,          // int attr
+                0,          // ext attr
+                $offset
+            ) . $nameBytes;
+
+            $localParts[] = $local;
+            $offset += strlen($local);
         }
-        $out->close();
+
+        $body = implode('', $localParts);
+        $central = implode('', $centralParts);
+        $count = count($entries);
+        $end = pack(
+            'VvvvvVVv',
+            0x06054b50,
+            0,
+            0,
+            $count,
+            $count,
+            strlen($central),
+            strlen($body),
+            0
+        );
+
+        if (file_put_contents($tmp, $body . $central . $end) === false) {
+            throw new RuntimeException('Kon tijdelijke RapidStart-zip niet schrijven.');
+        }
         if (!@rename($tmp, $path)) {
             @unlink($path);
             if (!@rename($tmp, $path)) {

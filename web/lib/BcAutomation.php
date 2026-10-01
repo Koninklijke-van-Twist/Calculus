@@ -487,34 +487,25 @@ final class BcAutomation
             $steps[] = 'configurationPackage aangemaakt';
         }
 
-        // On-prem Automation API: file is een collection — eerst file-entity aanmaken,
-        // daarna stream PATCHen (cloud-docs' Microsoft.NAV.upload bestaat hier niet).
+        // On-prem: file is een collection. Verwijder oude file-entity (kan corrupt/oude zip
+        // bevatten) en maak opnieuw aan vóór PATCH van de content-stream.
         $pkgRoot = $root . '(' . $packageId . ')';
         $fileCollection = $pkgRoot . '/file';
         $fileEntity = $fileCollection . "('" . rawurlencode($packageCode) . "')";
         $uploadUrl = $fileEntity . '/content';
 
-        $fileExists = false;
         try {
-            $files = $this->requestJson('GET', $fileCollection);
-            foreach ($files['value'] ?? [] as $row) {
-                if (is_array($row) && strcasecmp((string) ($row['code'] ?? ''), $packageCode) === 0) {
-                    $fileExists = true;
-                    break;
-                }
-            }
-        } catch (Throwable) {
-            $fileExists = false;
+            $this->requestJson('DELETE', $fileEntity);
+            $steps[] = 'oude file-entity verwijderd';
+        } catch (Throwable $e) {
+            $steps[] = 'file-delete: ' . $e->getMessage();
         }
 
-        if (!$fileExists) {
-            try {
-                $this->requestJson('POST', $fileCollection, ['code' => $packageCode]);
-                $steps[] = 'file-entity aangemaakt';
-            } catch (Throwable $e) {
-                // Race / al aanwezig
-                $steps[] = 'file-entity (post): ' . $e->getMessage();
-            }
+        try {
+            $this->requestJson('POST', $fileCollection, ['code' => $packageCode]);
+            $steps[] = 'file-entity aangemaakt';
+        } catch (Throwable $e) {
+            $steps[] = 'file-entity (post): ' . $e->getMessage();
         }
 
         try {
@@ -616,6 +607,9 @@ final class BcAutomation
             'Accept: application/json',
             'Content-Type: application/json',
         ];
+        if (strtoupper($method) === 'DELETE') {
+            $headers[] = 'If-Match: *';
+        }
         $opts = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
