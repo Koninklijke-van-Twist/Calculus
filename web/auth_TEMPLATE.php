@@ -52,10 +52,19 @@ $ictUsers = $allowedUsers;
 // Exacte BC company-naam (geen "KVT" op live/FAT; wel "Koninklijke van Twist")
 $calculusDefaultCompany = 'Koninklijke van Twist';
 
-// Optioneel: bedrijvenlijst uit Mímir GET /companies.php (name + environment).
-// Zonder sleutel ontdekt Calculus de bedrijven via de Automation API.
+// Mímir ($mimirApi), naast de BC-credentials hierboven:
+// - bedrijvenlijst via GET /companies.php (name + environment). Zonder sleutel
+//   ontdekt Calculus de bedrijven via de Automation API.
+// - bestaande projectbasislijnregels (OData) via query.php. Met $mimirApi gaan
+//   die reads eerst naar Mímir. Geeft Mímir een fout (verbinding/timeout,
+//   non-2xx, ongeldige JSON of een foutpayload), dan leest Calculus dezelfde
+//   regels via de eigen OData van de environment van het gekozen bedrijf en
+//   slaat Mímir voor de rest van dat PHP-verzoek over.
+// Zonder $mimirApi blijft alleen die directe OData actief.
+// Automation API (company-GUID, pakket apply) gaat nooit via Mímir.
 // $mimirApi = 'mimir_…';
 // $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 
-// Optioneel: OData Service Name(s) nadat BC-beheer de page heeft gepubliceerd
+// Optioneel: OData Service Name(s) nadat BC-beheer de page heeft gepubliceerd.
+// Zelfde lijst voor de Mímir-read en voor de eigen OData-fallback.
 // $calculusBaselineODataEntities = ['LVS_JobChngeOrderBudgetLne'];
