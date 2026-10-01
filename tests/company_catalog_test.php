@@ -40,12 +40,20 @@ check($mapped[1]['name'] === 'Koninklijke van Twist', 'natuurlijke sortering Kon
 check($mapped[2]['name'] === 'KVT FAT' && $mapped[2]['environment'] === 'kvtmdlive_fat', 'FAT-bedrijf blijft op fat');
 check($mapped[3]['name'] === 'KVT Germany' && $mapped[3]['environment'] === 'kvtgermanylive_aad', 'Germany op eigen database');
 
-expect_throw(static function (): void {
+try {
     CompanyCatalog::buildMap([
         'kvtmdlive_fat' => ['KVT'],
         'kvtmdlive_aad' => ['kvt'],
     ]);
-}, 'KVT [kvtmdlive_aad, kvtmdlive_fat]', 'overlap hoofdletterongevoelig');
+    check(false, 'overlap hoofdletterongevoelig (geen exception)');
+} catch (CompanyCatalogDuplicateException $error) {
+    check(
+        strpos($error->getMessage(), 'KVT [kvtmdlive_aad, kvtmdlive_fat]') !== false,
+        'overlap hoofdletterongevoelig :: ' . $error->getMessage()
+    );
+} catch (Throwable $error) {
+    check(false, 'overlap moet CompanyCatalogDuplicateException zijn, kreeg ' . get_class($error));
+}
 
 $fromMimir = CompanyCatalog::namesByEnvironmentFromMimir([
     'value' => [
@@ -82,20 +90,75 @@ file_put_contents($cache, json_encode([
 $GLOBALS['baseUrl'] = 'http://127.0.0.1:9';
 $GLOBALS['auth_list'] = [
     'kvtmdlive_fat' => ['mode' => 'basic', 'user' => 'x', 'pass' => 'y'],
+    'kvtgermanylive_aad' => ['mode' => 'basic', 'user' => 'x', 'pass' => 'y'],
+    'kvtmdlive_aad' => ['mode' => 'basic', 'user' => 'x', 'pass' => 'y'],
 ];
-$GLOBALS['environment'] = ['kvtmdlive_fat'];
+$GLOBALS['environment'] = ['kvtmdlive_fat', 'kvtgermanylive_aad'];
 unset($GLOBALS['mimirApi']);
+CompanyCatalog::setNamesByEnvironmentForTests(null);
 
 CompanyCatalog::clearMemoryCache();
 $started = microtime(true);
 $loaded = CompanyCatalog::load(false);
 $elapsed = microtime(true) - $started;
 check($elapsed < 2, 'verse cache raakt BC niet');
+check(count($loaded['companies']) === 2, 'verse cache houdt beide actieve environments');
 check($loaded['companies'][0]['name'] === 'KVT', 'cache levert KVT');
 
 $resolved = CompanyCatalog::resolve('kvt germany');
 check($resolved['name'] === 'KVT Germany', 'resolve houdt de BC-schrijfwijze');
 check($resolved['environment'] === 'kvtgermanylive_aad', 'Germany impliceert kvtgermanylive_aad');
+
+$GLOBALS['environment'] = ['kvtmdlive_fat'];
+$filteredMemo = CompanyCatalog::load(false);
+check(
+    count($filteredMemo['companies']) === 1 && $filteredMemo['companies'][0]['environment'] === 'kvtmdlive_fat',
+    'geheugencache laat een uitgezette environment vallen'
+);
+
+CompanyCatalog::clearMemoryCache();
+$filteredDisk = CompanyCatalog::load(false);
+check(
+    count($filteredDisk['companies']) === 1 && $filteredDisk['companies'][0]['name'] === 'KVT',
+    'schijfcache laat een uitgezette environment vallen'
+);
+
+file_put_contents($cache, json_encode([
+    'fetched_at' => time(),
+    'companies' => [
+        ['name' => 'KVT Germany', 'environment' => 'kvtgermanylive_aad'],
+    ],
+    'warnings' => [],
+], JSON_UNESCAPED_UNICODE));
+$GLOBALS['baseUrl'] = '';
+CompanyCatalog::clearMemoryCache();
+expect_throw(static function (): void {
+    CompanyCatalog::load(false);
+}, 'Bedrijven ophalen mislukt', 'lege filter ontdekt opnieuw');
+
+file_put_contents($cache, json_encode([
+    'fetched_at' => time() - 7200,
+    'companies' => [
+        ['name' => 'KVT', 'environment' => 'kvtmdlive_fat'],
+    ],
+    'warnings' => [],
+], JSON_UNESCAPED_UNICODE));
+CompanyCatalog::clearMemoryCache();
+CompanyCatalog::setNamesByEnvironmentForTests([
+    'kvtmdlive_fat' => ['KVT'],
+    'kvtmdlive_aad' => ['kvt'],
+]);
+expect_throw(static function (): void {
+    CompanyCatalog::load(false);
+}, 'Bedrijfsnaam-overlap', 'overlap gebruikt geen oude lijst');
+$diskAfterConflict = json_decode((string) file_get_contents($cache), true);
+check(
+    is_array($diskAfterConflict)
+    && ($diskAfterConflict['companies'][0]['name'] ?? '') === 'KVT'
+    && count($diskAfterConflict['warnings'] ?? []) === 0,
+    'overlap schrijft de cache niet terug'
+);
+CompanyCatalog::setNamesByEnvironmentForTests(null);
 
 expect_throw(static function (): void {
     CompanyCatalog::resolve('   ');

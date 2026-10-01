@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/BcAutomation.php';
 
+final class CompanyCatalogDuplicateException extends RuntimeException
+{
+}
+
 /**
  * BC-bedrijven over de actieve environments, met één bedrijf → één environment.
  *
@@ -18,9 +22,22 @@ final class CompanyCatalog
     /** @var array{fetched_at:int,companies:list<array{name:string,environment:string}>,warnings:list<string>}|null */
     private static $memo = null;
 
+    /** @var array<string, list<string>>|null */
+    private static $namesOverride = null;
+
     public static function clearMemoryCache(): void
     {
         self::$memo = null;
+    }
+
+    /**
+     * Vervangt live discovery in tests. null zet het normale pad terug.
+     *
+     * @param array<string, list<string>>|null $namesByEnvironment
+     */
+    public static function setNamesByEnvironmentForTests(?array $namesByEnvironment): void
+    {
+        self::$namesOverride = $namesByEnvironment;
     }
 
     public static function cacheFile(): string
@@ -125,7 +142,7 @@ final class CompanyCatalog
             }
             sort($messages, SORT_NATURAL | SORT_FLAG_CASE);
 
-            throw new RuntimeException(
+            throw new CompanyCatalogDuplicateException(
                 'Bedrijfsnaam-overlap tussen actieve environments. Kies unieke bedrijfsnamen per environment. Conflicten: '
                 . implode('; ', $messages)
             );
@@ -176,10 +193,19 @@ final class CompanyCatalog
     public static function load(bool $refresh = false): array
     {
         if (!$refresh && is_array(self::$memo)) {
-            return self::$memo;
+            $memo = self::filterCachedPayload(self::$memo);
+            if ($memo !== null) {
+                self::$memo = $memo;
+
+                return $memo;
+            }
+            self::$memo = null;
         }
 
         $cached = self::readCache();
+        if (is_array($cached)) {
+            $cached = self::filterCachedPayload($cached);
+        }
         $freshEnough = is_array($cached)
             && (time() - (int) $cached['fetched_at']) < self::CACHE_TTL_SECONDS;
         if (!$refresh && $freshEnough) {
@@ -194,6 +220,8 @@ final class CompanyCatalog
             self::$memo = $loaded;
 
             return $loaded;
+        } catch (CompanyCatalogDuplicateException $error) {
+            throw $error;
         } catch (Throwable $error) {
             if (is_array($cached) && $cached['companies'] !== []) {
                 $cached['warnings'][] = 'Actuele bedrijvenlijst niet bereikbaar; cache gebruikt. ' . $error->getMessage();
@@ -204,6 +232,29 @@ final class CompanyCatalog
 
             throw $error;
         }
+    }
+
+    /**
+     * Houdt alleen bedrijven van de nu actieve environments. Leeg resultaat is onbruikbaar.
+     *
+     * @param array{fetched_at:int,companies:list<array{name:string,environment:string}>,warnings:list<string>} $payload
+     * @return array{fetched_at:int,companies:list<array{name:string,environment:string}>,warnings:list<string>}|null
+     */
+    private static function filterCachedPayload(array $payload): ?array
+    {
+        $active = array_fill_keys(self::activeEnvironments(), true);
+        $companies = [];
+        foreach ($payload['companies'] as $row) {
+            if (isset($active[$row['environment']])) {
+                $companies[] = $row;
+            }
+        }
+        if ($companies === []) {
+            return null;
+        }
+        $payload['companies'] = $companies;
+
+        return $payload;
     }
 
     /**
@@ -234,6 +285,14 @@ final class CompanyCatalog
      */
     private static function discover(): array
     {
+        if (self::$namesOverride !== null) {
+            return [
+                'fetched_at' => time(),
+                'companies' => self::buildMap(self::$namesOverride),
+                'warnings' => [],
+            ];
+        }
+
         $environments = self::activeEnvironments();
         if ($environments === []) {
             throw new RuntimeException('Geen actieve environments geconfigureerd.');
@@ -300,15 +359,16 @@ final class CompanyCatalog
         }
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT => 30,
             CURLOPT_HTTPHEADER => [
                 'Accept: application/json',
                 'X-API-Key: ' . $key,
             ],
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_USERAGENT => 'Calculus-BCClient/1.0',
         ]);
         $raw = curl_exec($ch);

@@ -11,7 +11,7 @@ Actieve environments zijn `$environment` gesneden met de sleutels van `$auth_lis
 1. Staat `$mimirApi` in `auth.php`, dan is de lijst `GET {mimirBase}/companies.php` (standaard `https://sleutels.kvt.nl/mimir/api/companies.php`). Het antwoord is `{ "value": [ { "name", "environment" } ] }`, de nightly-catalogus van Mímir. Alleen rijen waarvan `environment` actief is in Calculus komen in de dropdown.
 2. Zonder sleutel, of als Mímir leeg of onbereikbaar is, haalt Calculus per actieve environment de bedrijven op via de Automation API: `{baseUrl}/{environment}/api/microsoft/automation/v2.0/companies` (`BcAutomation::listCompanies()`).
 
-Een bedrijfsnaam mag, hoofdletterongevoelig, maar in één actieve environment voorkomen. Dezelfde naam in twee databases is een fout (geen stille voorkeur). De lijst blijft een uur in `web/cache/bc-companies.json` (niet in git). Lukt verversen niet, dan blijft de vorige lijst bruikbaar.
+Een bedrijfsnaam mag, hoofdletterongevoelig, maar in één actieve environment voorkomen. Dezelfde naam in twee databases is een fout (geen stille voorkeur) en valt niet terug op een oudere lijst. De lijst blijft een uur in `web/cache/bc-companies.json` (niet in git). Bij hergebruik tellen alleen bedrijven van de nu actieve environments; blijft er dan niets over, dan wordt de lijst opnieuw opgehaald. Lukt dat ophalen niet door een netwerk- of discoverfout, dan blijft de vorige lijst bruikbaar.
 
 ## Bekende KvT-verdeling
 
