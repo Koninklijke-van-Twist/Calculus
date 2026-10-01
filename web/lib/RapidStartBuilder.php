@@ -66,13 +66,18 @@ final class RapidStartBuilder
             $zip->close();
         }
 
-        self::rewriteZipDeflate($targetPath, $entries);
+        self::rewriteZipForBc($targetPath, $entries);
     }
 
     /**
+     * Herschrijf als zip die BC/.NET accepteert.
+     * PHP ZipArchive::CM_DEFLATE zet general-purpose flag 0x0002 ("maximum"),
+     * wat System.IO.Compression weigert met "unsupported compression method".
+     * CM_STORE (methode 0, flag 0) is wel veilig — RapidStart blijft geldige xlsx.
+     *
      * @param array<string, string> $entries
      */
-    private static function rewriteZipDeflate(string $path, array $entries): void
+    private static function rewriteZipForBc(string $path, array $entries): void
     {
         $tmp = $path . '.tmp';
         @unlink($tmp);
@@ -81,12 +86,8 @@ final class RapidStartBuilder
             throw new RuntimeException('Kon tijdelijke RapidStart-zip niet maken.');
         }
         foreach ($entries as $name => $data) {
-            $useStore = str_ends_with($name, '.rels') && strlen($data) < 512;
             $out->addFromString($name, $data);
-            $out->setCompressionName(
-                $name,
-                $useStore ? ZipArchive::CM_STORE : ZipArchive::CM_DEFLATE
-            );
+            $out->setCompressionName($name, ZipArchive::CM_STORE);
         }
         $out->close();
         if (!@rename($tmp, $path)) {
