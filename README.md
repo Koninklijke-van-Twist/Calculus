@@ -20,6 +20,7 @@ ICT-medewerker:
 
 Bron-tabblad in Excel: **`Invoer BC`** (niet Basisblad).  
 BC-tabel: LogicVision **`LVS_JobChngeOrderBudgetLne`** / UI **Projectbasislijnregel** (tabel-ID `11332917`).  
+De preview van bestaande regels leest de gepubliceerde OData-entity **`JobBaselineLines`** met filter **`Job_No`** (zelfde service als FinRap). De AL-objectnaam, de UI-caption en spellingvarianten daarvan zijn geen entity sets.  
 UI-kolom **Basislijn (totale kostprijs)** = `Aantal × Kostprijs` (`Quantity × UnitCost`), geen apart veld.
 
 Zie veldmapping in [docs/MAPPING.md](docs/MAPPING.md).
@@ -51,7 +52,7 @@ cp web/auth_TEMPLATE.php web/auth.php
 # optioneel $mimirApi (bedrijvenlijst én basislijnregels), $calculusDefaultCompany, $calculusBaselineODataEntities
 ```
 
-`$mimirApi` en de BC-credentials horen naast elkaar. Dezelfde key levert ook de bedrijvenlijst (`GET /companies.php`); zonder key komt die lijst uit de Automation API. Staat de key er, dan leest de preview van bestaande basislijnregels eerst Mímir (`query.php`, `max_age` 600, `$top` 500, filter `JobNo`, dezelfde entity-namen als `$calculusBaselineODataEntities`). Faalt die aanroep, dan dezelfde read via de eigen OData van de environment van het gekozen bedrijf (`Job_No`, daarna `JobNo`). Na die eerste fout slaat dit PHP-verzoek Mímir over. Wijkt `meta.environment` af van die environment, dan ook eigen OData, zonder het circuit te openen. Zonder `$mimirApi` blijft alleen die directe OData. Ontbreken bruikbare BC-credentials, dan komt de oorspronkelijke Mímir-fout terug. Pakket-apply blijft de Automation API; dat is geen OData-read.
+`$mimirApi` en de BC-credentials horen naast elkaar. Dezelfde key levert ook de bedrijvenlijst (`GET /companies.php`); zonder key komt die lijst uit de Automation API. Staat de key er, dan leest de preview van bestaande basislijnregels eerst Mímir (`query.php`, `max_age` 600, `$top` 500, entity `JobBaselineLines`, filter `Job_No`, tenzij `$calculusBaselineODataEntities` een andere gepubliceerde servicenaam zet). Faalt die aanroep, dan dezelfde read via de eigen OData van de environment van het gekozen bedrijf (zelfde entity, filter `Job_No`). Na die eerste fout slaat dit PHP-verzoek Mímir over. Wijkt `meta.environment` af van die environment, dan ook eigen OData, zonder het circuit te openen. Zonder `$mimirApi` blijft alleen die directe OData. Ontbreken bruikbare BC-credentials, dan komt de oorspronkelijke Mímir-fout terug. Pakket-apply blijft de Automation API; dat is geen OData-read.
 
 FTP-secrets op de GitHub-repo (zoals andere sleutels-apps):
 
@@ -69,6 +70,6 @@ Calculus **verwijdert nooit** bestaande regels. Terugdraaien gebeurt handmatig i
 ## Beperkingen / open
 
 - Live BC apply hangt af van Automation API-rechten op de service-account en exacte upload-endpoints van jullie NST-versie; faalt apply, dan blijft het pakket downloadbaar voor handmatige import.
-- OData-preview van bestaande regels probeert eerst Mímir (entity-namen uit `$calculusBaselineODataEntities`, anders `Projectbasislijnregel` en daarna `LVS_JobChngeOrderBudgetLne`). Een 404 op de eerste naam probeert de volgende nog via Mímir; andere Mímir-fouten vallen meteen terug op eigen OData. Zonder gepubliceerde Web Service op tabel `11332917` zie je een korte waarschuwing; voorbeeld en download gaan door.
+- OData-preview van bestaande regels probeert eerst Mímir op `JobBaselineLines` (of de namen in `$calculusBaselineODataEntities`). Filter is `Job_No` voor Mímir en voor de eigen OData. Een 404 op een geconfigureerde naam probeert de volgende nog via Mímir; andere Mímir-fouten vallen meteen terug op eigen OData. Zonder die gepubliceerde Web Service zie je een korte waarschuwing; voorbeeld en download gaan door.
 - BASCALC moet gecachete Excel-waarden hebben (bestand ooit in Excel geopend/opgeslagen). Formules zonder cache → harde fout.
 - Naam **Daedalus** was al bezet (werkorders); deze app heet **Calculus**.

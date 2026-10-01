@@ -139,9 +139,12 @@ final class BcAutomation
     }
 
     /**
-     * OData entity-set kandidaten voor projectbasislijnregels (tabel 11332917).
-     * Override optioneel via $calculusBaselineODataEntities in auth.php.
-     * Zelfde lijst voor Mímir en voor de eigen OData-fallback.
+     * OData entity-set voor projectbasislijnregels (tabel 11332917).
+     * Standaard de gepubliceerde service JobBaselineLines, dezelfde als FinRap.
+     * De AL-objectnaam en de UI-caption zijn geen entity sets.
+     * Override optioneel via $calculusBaselineODataEntities in auth.php
+     * (alleen gepubliceerde servicenamen). Zelfde lijst voor Mímir en voor
+     * de eigen OData-fallback.
      *
      * @return list<string>
      */
@@ -161,11 +164,7 @@ final class BcAutomation
             }
         }
 
-        // Caption / RapidStart-XML-naam — alleen bruikbaar als Web Service gepubliceerd.
-        return [
-            'Projectbasislijnregel',
-            'LVS_JobChngeOrderBudgetLne',
-        ];
+        return ['JobBaselineLines'];
     }
 
     /**
@@ -251,8 +250,8 @@ final class BcAutomation
     }
 
     /**
-     * Eigen OData, zonder Mímir. Eerste entity/veld dat HTTP-succes geeft wint,
-     * ook als die lijst leeg is. Job_No eerst (OData-page), daarna JobNo.
+     * Eigen OData, zonder Mímir. Eerste entity die HTTP-succes geeft wint,
+     * ook als die lijst leeg is. Filter is het page-veld Job_No.
      *
      * @return list<array<string, mixed>>
      */
@@ -261,30 +260,24 @@ final class BcAutomation
         $candidates = $this->baselineEntityCandidates();
         /** @var list<array{entity:string,url:string,error:string}> $attempts */
         $attempts = [];
+        $filter = $this->baselineJobFilter($jobNo);
 
         foreach ($candidates as $entity) {
-            foreach (['Job_No', 'JobNo'] as $jobField) {
-                $url = $this->companyEntityUrl($entity, [
-                    '$filter' => $jobField . " eq '" . $this->odataEscape($jobNo) . "'",
-                    '$top' => 500,
-                ]);
-                try {
-                    $json = $this->odataGetJson($url);
-                    $rows = $json['value'] ?? [];
+            $url = $this->companyEntityUrl($entity, [
+                '$filter' => $filter,
+                '$top' => 500,
+            ]);
+            try {
+                $json = $this->odataGetJson($url);
+                $rows = $json['value'] ?? [];
 
-                    return is_array($rows) ? $rows : [];
-                } catch (Throwable $e) {
-                    $msg = $e->getMessage();
-                    $attempts[] = [
-                        'entity' => $entity,
-                        'url' => $url,
-                        'error' => $msg,
-                    ];
-                    // Entity zelf ontbreekt (404): tweede veldnaam heeft geen zin.
-                    if (preg_match('/\b404\b/', $msg) || stripos($msg, 'does not exist') !== false) {
-                        break;
-                    }
-                }
+                return is_array($rows) ? $rows : [];
+            } catch (Throwable $e) {
+                $attempts[] = [
+                    'entity' => $entity,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ];
             }
         }
 
@@ -332,8 +325,8 @@ final class BcAutomation
             $detail[] = 'error=' . $lastError;
         }
         if (preg_match('/\b404\b/', $lastError) || str_contains($lower, 'not found')) {
-            $detail[] = 'hint=entity unpublished; publish Web Services for table 11332917 '
-                . '(LVS_JobChngeOrderBudgetLne) or set $calculusBaselineODataEntities';
+            $detail[] = 'hint=entity unpublished; expected published OData entity JobBaselineLines '
+                . '(filter Job_No) or set $calculusBaselineODataEntities to that service name';
         }
         error_log('Calculus OData baseline read soft-fail: ' . implode('; ', $detail));
 
@@ -361,10 +354,19 @@ final class BcAutomation
     private function mimirBaselineQuery(string $entity, string $jobNo): array
     {
         return MimirClient::query($this->companyName, $entity, [
-            'filter' => 'JobNo eq \'' . $this->odataEscape($jobNo) . '\'',
+            'filter' => $this->baselineJobFilter($jobNo),
             'top' => 500,
             'max_age' => 600,
         ]);
+    }
+
+    /**
+     * Projectfilter op de gepubliceerde page. RapidStart-XML heet JobNo;
+     * JobBaselineLines gebruikt Job_No, net als FinRap.
+     */
+    private function baselineJobFilter(string $jobNo): string
+    {
+        return "Job_No eq '" . $this->odataEscape($jobNo) . "'";
     }
 
     /** @return array<string, mixed> */

@@ -65,6 +65,7 @@ $calculusDefaultCompany = 'Koninklijke van Twist';
 // $mimirApi = 'mimir_…';
 // $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 
-// Optioneel: OData Service Name(s) nadat BC-beheer de page heeft gepubliceerd.
+// Optioneel: andere gepubliceerde OData-servicenaam dan JobBaselineLines.
 // Zelfde lijst voor de Mímir-read en voor de eigen OData-fallback.
-// $calculusBaselineODataEntities = ['LVS_JobChngeOrderBudgetLne'];
+// Filter is altijd Job_No. AL-objectnaam en UI-caption zijn geen entity sets.
+// $calculusBaselineODataEntities = ['JobBaselineLines'];

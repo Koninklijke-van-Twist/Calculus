@@ -125,6 +125,10 @@ if (PHP_SAPI === 'cli' && MimirClient::timeoutSeconds() !== 600) {
     mimir_fail('huidige SAPI-timeout klopt niet');
 }
 
+if (mimir_bc()->baselineEntityCandidates() !== ['JobBaselineLines']) {
+    mimir_fail('standaard entity-set moet JobBaselineLines zijn');
+}
+
 // Zonder key: alleen eigen OData, circuit dicht, Mímir niet aangeroepen.
 mimir_reset_calls();
 $mimirApi = '';
@@ -138,7 +142,7 @@ if ($plain[0]['Quantity'] !== 2) {
 if (MimirClient::circuitOpen()) {
     mimir_fail('circuit mag niet open zonder Mímir');
 }
-$expectedDirect = "https://bc.example/kvtmdlive_fat/ODataV4/Company('KVT')/Projectbasislijnregel?%24filter=Job_No%20eq%20%27PRJ1%27&%24top=500";
+$expectedDirect = "https://bc.example/kvtmdlive_fat/ODataV4/Company('KVT')/JobBaselineLines?%24filter=Job_No%20eq%20%27PRJ1%27&%24top=500";
 if ($odataUrls[0] !== $expectedDirect) {
     mimir_fail('eigen OData-URL wijkt af: ' . $odataUrls[0]);
 }
@@ -183,8 +187,8 @@ if (strpos($joinedHeaders, 'Authorization: Bearer mimir_test_key_should_not_leak
 $posted = json_decode((string) $call['body'], true);
 if (!is_array($posted)
     || ($posted['company'] ?? null) !== 'KVT'
-    || ($posted['table'] ?? null) !== 'Projectbasislijnregel'
-    || ($posted['filter'] ?? null) !== "JobNo eq 'PRJ9'"
+    || ($posted['table'] ?? null) !== 'JobBaselineLines'
+    || ($posted['filter'] ?? null) !== "Job_No eq 'PRJ9'"
     || ($posted['top'] ?? null) !== 500
     || ($posted['max_age'] ?? null) !== 600
     || array_key_exists('select', $posted)) {
@@ -200,8 +204,9 @@ if ($emptyRows !== [] || $emptyBc->baselineReadSource() !== 'mimir' || $odataUrl
     mimir_fail('lege Mímir-lijst moet gelden als succes');
 }
 
-// 404 op de eerste entity, succes op de tweede: nog steeds Mímir, circuit dicht.
+// 404 op een geconfigureerde naam, succes op JobBaselineLines: nog steeds Mímir, circuit dicht.
 mimir_reset_calls();
+$calculusBaselineODataEntities = ['MissingBaseline', 'JobBaselineLines'];
 mimir_script_steps([
     ['status' => 404, 'body' => '{"error":"unknown entity"}'],
     [
@@ -211,6 +216,7 @@ mimir_script_steps([
 ]);
 $second = mimir_bc();
 $secondRows = $second->fetchExistingBaselineLines('PRJ1');
+unset($calculusBaselineODataEntities);
 if (count($mimirCalls) !== 2 || $odataUrls !== [] || MimirClient::circuitOpen()) {
     mimir_fail('404 op de eerste entity moet de tweede nog via Mímir proberen');
 }
@@ -218,8 +224,10 @@ if ($second->baselineReadSource() !== 'mimir' || ($secondRows[0]['Quantity'] ?? 
     mimir_fail('tweede entity kwam niet uit Mímir');
 }
 $secondBody = json_decode((string) $mimirCalls[1]['body'], true);
-if (!is_array($secondBody) || ($secondBody['table'] ?? null) !== 'LVS_JobChngeOrderBudgetLne') {
-    mimir_fail('tweede kandidaat heeft de verkeerde tabel');
+if (!is_array($secondBody)
+    || ($secondBody['table'] ?? null) !== 'JobBaselineLines'
+    || ($secondBody['filter'] ?? null) !== "Job_No eq 'PRJ1'") {
+    mimir_fail('tweede kandidaat heeft de verkeerde tabel of filter');
 }
 
 // Transportfout: meteen fallback, tweede entity niet via Mímir, circuit open.
@@ -229,6 +237,9 @@ $fallback = mimir_bc();
 $fallbackRows = $fallback->fetchExistingBaselineLines('PRJ1');
 if (count($mimirCalls) !== 1 || count($odataUrls) !== 1) {
     mimir_fail('cURL-fout moet meteen naar eigen OData');
+}
+if (strpos($odataUrls[0], '/JobBaselineLines?') === false || strpos($odataUrls[0], 'Job_No') === false || strpos($odataUrls[0], 'JobNo') !== false) {
+    mimir_fail('fallback-OData moet JobBaselineLines met Job_No zijn: ' . $odataUrls[0]);
 }
 if (!$fallbackRows || $fallback->baselineReadSource() !== 'odata-fallback' || !MimirClient::circuitOpen()) {
     mimir_fail('fallback-bron of circuit klopt niet na cURL-fout');
@@ -268,19 +279,25 @@ if (strpos(mimir_log(), 'mimir_test_key_should_not_leak') !== false || strpos(mi
     mimir_fail('foutpayload lekte een geheim in de log');
 }
 
-// Beide entities 404: dan pas circuit en eigen OData.
+// JobBaselineLines 404: meteen circuit en eigen OData op dezelfde entity en Job_No.
 mimir_reset_calls();
-mimir_script_steps([
-    ['status' => 404, 'body' => '{"error":"no Projectbasislijnregel"}'],
-    ['status' => 404, 'body' => '{"error":"no LVS"}'],
-]);
+$mimirScript = ['status' => 404, 'body' => '{"error":"unknown entity JobBaselineLines"}'];
 $both = mimir_bc();
 $both->fetchExistingBaselineLines('PRJ1');
-if (count($mimirCalls) !== 2 || count($odataUrls) !== 1 || !MimirClient::circuitOpen()) {
-    mimir_fail('twee 404s moeten daarna naar eigen OData');
+if (count($mimirCalls) !== 1 || count($odataUrls) !== 1 || !MimirClient::circuitOpen()) {
+    mimir_fail('404 op JobBaselineLines moet daarna naar eigen OData');
+}
+$missBody = json_decode((string) $mimirCalls[0]['body'], true);
+if (!is_array($missBody)
+    || ($missBody['table'] ?? null) !== 'JobBaselineLines'
+    || ($missBody['filter'] ?? null) !== "Job_No eq 'PRJ1'") {
+    mimir_fail('404-call gebruikte niet JobBaselineLines/Job_No');
+}
+if (strpos($odataUrls[0], '/JobBaselineLines?') === false || strpos($odataUrls[0], 'Job_No') === false) {
+    mimir_fail('OData na 404 wijkt af: ' . $odataUrls[0]);
 }
 if ($both->baselineReadSource() !== 'odata-fallback') {
-    mimir_fail('bron na twee 404s moet odata-fallback zijn');
+    mimir_fail('bron na 404 moet odata-fallback zijn');
 }
 
 // Ander environment: eigen OData, circuit blijft dicht.
