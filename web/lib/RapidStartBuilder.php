@@ -28,6 +28,7 @@ final class RapidStartBuilder
             throw new RuntimeException('Kon doel-xlsx niet openen.');
         }
 
+        $entries = [];
         try {
             $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
             $tableXml = $zip->getFromName('xl/tables/table1.xml');
@@ -46,10 +47,53 @@ final class RapidStartBuilder
                 throw new RuntimeException('table1.xml kon niet worden bijgewerkt.');
             }
 
-            $zip->addFromString('xl/worksheets/sheet1.xml', $newSheet);
-            $zip->addFromString('xl/tables/table1.xml', $newTable);
+            // Lees alle entries, vervang sheet/table, herschrijf zip met alleen Deflate/Store.
+            // (BC/.NET weigert sommige ZipArchive-rewrite compressiemethodes.)
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $name = $zip->getNameIndex($i);
+                if ($name === false) {
+                    continue;
+                }
+                $data = $zip->getFromIndex($i);
+                if ($data === false) {
+                    throw new RuntimeException('Kon zip-entry niet lezen: ' . $name);
+                }
+                $entries[$name] = $data;
+            }
+            $entries['xl/worksheets/sheet1.xml'] = $newSheet;
+            $entries['xl/tables/table1.xml'] = $newTable;
         } finally {
             $zip->close();
+        }
+
+        self::rewriteZipDeflate($targetPath, $entries);
+    }
+
+    /**
+     * @param array<string, string> $entries
+     */
+    private static function rewriteZipDeflate(string $path, array $entries): void
+    {
+        $tmp = $path . '.tmp';
+        @unlink($tmp);
+        $out = new ZipArchive();
+        if ($out->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            throw new RuntimeException('Kon tijdelijke RapidStart-zip niet maken.');
+        }
+        foreach ($entries as $name => $data) {
+            $useStore = str_ends_with($name, '.rels') && strlen($data) < 512;
+            $out->addFromString($name, $data);
+            $out->setCompressionName(
+                $name,
+                $useStore ? ZipArchive::CM_STORE : ZipArchive::CM_DEFLATE
+            );
+        }
+        $out->close();
+        if (!@rename($tmp, $path)) {
+            @unlink($path);
+            if (!@rename($tmp, $path)) {
+                throw new RuntimeException('Kon herschreven RapidStart-pakket niet opslaan.');
+            }
         }
     }
 
@@ -63,7 +107,6 @@ final class RapidStartBuilder
             $prefix = '';
         }
 
-        // Keep workbook header up to sheetData open, replace sheetData content
         if (!preg_match('/^(.*<(?:\w+:)?sheetData>)(.*)(<\/(?:\w+:)?sheetData>.*)$/s', $original, $m)) {
             throw new RuntimeException('sheetData niet gevonden in template.');
         }

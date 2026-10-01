@@ -452,7 +452,10 @@ final class BcAutomation
     /**
      * Volledige apply-flow. Gooit met letterlijke BC-fout bij falen.
      *
-     * @return array{package_code: string, company_id: string, steps: list<string>, raw: array<string, mixed>}
+     * Automation API (MS docs): packageId = GUID, niet de package-code in quotes.
+     * Upload: PATCH …/configurationPackages({id})/file('{code}')/content
+     *
+     * @return array{package_code: string, company_id: string, package_id: string, steps: list<string>, raw: array<string, mixed>}
      */
     public function applyConfigurationPackage(string $packageCode, string $xlsxPath): array
     {
@@ -464,8 +467,103 @@ final class BcAutomation
         $steps = [];
         $root = $this->automationRoot() . '/companies(' . $companyId . ')/configurationPackages';
 
-        // Upsert package header
-        $existing = null;
+        $existing = $this->findConfigurationPackage($root, $packageCode);
+        if (is_array($existing) && trim((string) ($existing['id'] ?? '')) !== '') {
+            $packageId = (string) $existing['id'];
+            $steps[] = 'configurationPackage bestond al';
+        } else {
+            $created = $this->requestJson('POST', $root, [
+                'code' => $packageCode,
+                'packageName' => $packageCode,
+            ]);
+            $packageId = trim((string) ($created['id'] ?? ''));
+            if ($packageId === '') {
+                $refetched = $this->findConfigurationPackage($root, $packageCode);
+                $packageId = trim((string) ($refetched['id'] ?? ''));
+            }
+            if ($packageId === '') {
+                throw new RuntimeException('Kon configurationPackage-id (GUID) niet bepalen na aanmaken.');
+            }
+            $steps[] = 'configurationPackage aangemaakt';
+        }
+
+        // On-prem Automation API: file is een collection — eerst file-entity aanmaken,
+        // daarna stream PATCHen (cloud-docs' Microsoft.NAV.upload bestaat hier niet).
+        $pkgRoot = $root . '(' . $packageId . ')';
+        $fileCollection = $pkgRoot . '/file';
+        $fileEntity = $fileCollection . "('" . rawurlencode($packageCode) . "')";
+        $uploadUrl = $fileEntity . '/content';
+
+        $fileExists = false;
+        try {
+            $files = $this->requestJson('GET', $fileCollection);
+            foreach ($files['value'] ?? [] as $row) {
+                if (is_array($row) && strcasecmp((string) ($row['code'] ?? ''), $packageCode) === 0) {
+                    $fileExists = true;
+                    break;
+                }
+            }
+        } catch (Throwable) {
+            $fileExists = false;
+        }
+
+        if (!$fileExists) {
+            try {
+                $this->requestJson('POST', $fileCollection, ['code' => $packageCode]);
+                $steps[] = 'file-entity aangemaakt';
+            } catch (Throwable $e) {
+                // Race / al aanwezig
+                $steps[] = 'file-entity (post): ' . $e->getMessage();
+            }
+        }
+
+        try {
+            $this->requestBinary('PATCH', $uploadUrl, $xlsxPath, 'application/octet-stream');
+            $steps[] = 'package geüpload';
+        } catch (Throwable $e) {
+            throw new RuntimeException('Package-upload mislukt: ' . $e->getMessage());
+        }
+
+        // Import + apply gebruiken dezelfde GUID; status pollen (async op NST)
+        foreach (
+            [
+                'Microsoft.NAV.import' => 'importStatus',
+                'Microsoft.NAV.apply' => 'applyStatus',
+            ] as $action => $statusField
+        ) {
+            try {
+                $this->requestJson('POST', $pkgRoot . '/' . $action, new stdClass());
+                $steps[] = $action . ' gestart';
+            } catch (Throwable $e) {
+                // Dubbele start terwijl taak al loopt is soms OK
+                $steps[] = $action . ' (start): ' . $e->getMessage();
+            }
+            $final = $this->waitForPackageField($pkgRoot, $statusField, ['Completed', 'Error'], 180);
+            $steps[] = $statusField . '=' . $final;
+            if (strcasecmp($final, 'Error') === 0) {
+                $pkg = $this->requestJson('GET', $pkgRoot);
+                $errKey = $statusField === 'importStatus' ? 'importError' : 'applyError';
+                $detail = trim((string) ($pkg[$errKey] ?? ''));
+                throw new RuntimeException(
+                    $action . ' mislukt' . ($detail !== '' ? ': ' . $detail : ' (status Error)')
+                );
+            }
+        }
+
+        return [
+            'package_code' => $packageCode,
+            'company_id' => $companyId,
+            'package_id' => $packageId,
+            'steps' => $steps,
+            'raw' => [],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function findConfigurationPackage(string $root, string $packageCode): ?array
+    {
         try {
             $filter = http_build_query(
                 ['$filter' => "code eq '" . $this->odataEscape($packageCode) . "'"],
@@ -474,59 +572,34 @@ final class BcAutomation
                 PHP_QUERY_RFC3986
             );
             $list = $this->requestJson('GET', $root . '?' . $filter);
-            $existing = $list['value'][0] ?? null;
+            $row = $list['value'][0] ?? null;
+
+            return is_array($row) ? $row : null;
         } catch (Throwable) {
-            $existing = null;
+            return null;
         }
+    }
 
-        if (!is_array($existing)) {
-            $this->requestJson('POST', $root, [
-                'code' => $packageCode,
-                'packageName' => $packageCode,
-            ]);
-            $steps[] = 'configurationPackage aangemaakt';
-        } else {
-            $steps[] = 'configurationPackage bestond al';
-        }
-
-        // Upload content — endpoint kan per BC-versie verschillen
-        $uploadUrl = $root . "('" . rawurlencode($packageCode) . "')/Microsoft.NAV.upload";
-        $altUpload = $root . "('" . rawurlencode($packageCode) . "')/file('" . rawurlencode($packageCode) . "')/content";
-
-        $uploaded = false;
-        $uploadErrors = [];
-        foreach ([$uploadUrl, $altUpload] as $u) {
-            try {
-                $this->requestBinary('PATCH', $u, $xlsxPath, 'application/octet-stream');
-                $uploaded = true;
-                $steps[] = 'package geüpload via ' . $u;
-                break;
-            } catch (Throwable $e) {
-                $uploadErrors[] = $e->getMessage();
+    private function waitForPackageField(
+        string $pkgRoot,
+        string $field,
+        array $doneValues,
+        int $timeoutSeconds
+    ): string {
+        $deadline = time() + $timeoutSeconds;
+        $last = '';
+        while (time() < $deadline) {
+            $pkg = $this->requestJson('GET', $pkgRoot);
+            $last = (string) ($pkg[$field] ?? '');
+            foreach ($doneValues as $done) {
+                if (strcasecmp($last, (string) $done) === 0) {
+                    return $last;
+                }
             }
-        }
-        if (!$uploaded) {
-            throw new RuntimeException(
-                "Package-upload mislukt. BC-fouten:\n- " . implode("\n- ", $uploadErrors)
-            );
+            sleep(2);
         }
 
-        foreach (['Microsoft.NAV.import', 'Microsoft.NAV.apply'] as $action) {
-            $actionUrl = $root . "('" . rawurlencode($packageCode) . "')/" . $action;
-            try {
-                $this->requestJson('POST', $actionUrl, new stdClass());
-                $steps[] = $action . ' OK';
-            } catch (Throwable $e) {
-                throw new RuntimeException($action . ' mislukt: ' . $e->getMessage());
-            }
-        }
-
-        return [
-            'package_code' => $packageCode,
-            'company_id' => $companyId,
-            'steps' => $steps,
-            'raw' => [],
-        ];
+        return $last !== '' ? $last : 'Timeout';
     }
 
     /**
