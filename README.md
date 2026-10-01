@@ -10,9 +10,10 @@ ICT-medewerker:
 
 1. Kiest Asclepius-ticket (xlsx-bijlage) of uploadt een BASCALC-`.xlsx`
 2. Vult projectnummer in (`PRJ…`)
-3. Ziet dry-run: geparste regels, totalen, eventuele bestaande BC-regels, hash-waarschuwing
-4. Bevestigt expliciet → RapidStart-pakket bouwen, optioneel Automation API apply
-5. Krijgt resultaat + optionele ticketreactie
+3. Kiest het BC-bedrijf (de omgeving volgt uit dat bedrijf; zie [docs/COMPANIES.md](docs/COMPANIES.md))
+4. Ziet dry-run: geparste regels, totalen, eventuele bestaande BC-regels, hash-waarschuwing
+5. Bevestigt expliciet → RapidStart-pakket bouwen, optioneel Automation API apply
+6. Krijgt resultaat + optionele ticketreactie
 
 ## Gekozen route
 
@@ -24,7 +25,7 @@ UI-kolom **Basislijn (totale kostprijs)** = `Aantal × Kostprijs` (`Quantity × 
 
 Zie veldmapping in [docs/MAPPING.md](docs/MAPPING.md).
 
-Default-environment: **FAT** (`kvtmdlive_fat` of wat in `auth.php` staat met `fat` in de naam). Live alleen met checkbox.
+Geen environment-kiezer. De dropdown toont BC-bedrijven; het bedrijf bepaalt de database (`kvtmdlive_aad` voor KVT/HVT, `kvtgermanylive_aad` voor KVT Germany, `kvtmdlive_fat` voor FAT). Een environment zonder `fat` in de naam schrijft alleen na de live-checkbox. Zie [docs/COMPANIES.md](docs/COMPANIES.md).
 
 ## Structuur
 
@@ -39,6 +40,7 @@ web/
   lib/AsclepiusClient.php
   lib/BcAutomation.php   Automation API + OData-preview (Mímir, anders eigen OData)
   lib/MimirClient.php    Mímir query-client en circuit breaker
+  lib/CompanyCatalog.php bedrijvenlijst en bedrijf → environment
   templates/NEWBUILD_CALCULATIE_template.xlsx
   data/                  runtime (sqlite, packages) — niet in git
 ```
@@ -47,10 +49,11 @@ web/
 
 ```bash
 cp web/auth_TEMPLATE.php web/auth.php
-# vul $auth_list, $allowedUsers (ICT), optioneel $asclepiusApiKey, $mimirApi
+# vul $auth_list, $environment (actieve databases), $allowedUsers (ICT)
+# optioneel $asclepiusApiKey, $mimirApi (bedrijvenlijst én basislijnregels), $calculusDefaultCompany
 ```
 
-`$mimirApi` en de BC-credentials horen naast elkaar. Staat de key er, dan leest de preview van bestaande basislijnregels eerst Mímir (`query.php`, `max_age` 600, `$top` 500, filter `JobNo`). Faalt die aanroep, dan dezelfde read via de eigen OData van de gekozen environment (`$baseUrl` / `$auth_list`). Na die eerste fout slaat dit PHP-verzoek Mímir over. Wijkt `meta.environment` af van de gekozen environment, dan ook eigen OData, zonder het circuit te openen. Zonder `$mimirApi` verandert het directe OData-pad niet. Ontbreken bruikbare BC-credentials, dan komt de oorspronkelijke Mímir-fout terug. Pakket-apply blijft de Automation API; dat is geen OData-read.
+`$mimirApi` en de BC-credentials horen naast elkaar. Dezelfde key levert ook de bedrijvenlijst (`GET /companies.php`); zonder key komt die lijst uit de Automation API. Staat de key er, dan leest de preview van bestaande basislijnregels eerst Mímir (`query.php`, `max_age` 600, `$top` 500, filter `JobNo`). Faalt die aanroep, dan dezelfde read via de eigen OData van de environment van het gekozen bedrijf (`$baseUrl` / `$auth_list`). Na die eerste fout slaat dit PHP-verzoek Mímir over. Wijkt `meta.environment` af van die environment, dan ook eigen OData, zonder het circuit te openen. Zonder `$mimirApi` verandert het directe OData-pad niet. Ontbreken bruikbare BC-credentials, dan komt de oorspronkelijke Mímir-fout terug. Pakket-apply blijft de Automation API; dat is geen OData-read.
 
 FTP-secrets op de GitHub-repo (zoals andere sleutels-apps):
 
