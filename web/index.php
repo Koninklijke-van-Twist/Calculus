@@ -43,18 +43,33 @@ function calculus_user_email(): string
 /**
  * @param list<array{name:string,environment:string}> $companies
  */
+function calculus_remember_company(string $company): void
+{
+    $company = trim($company);
+    if ($company === '') {
+        return;
+    }
+    $_SESSION['calculus_last_company'] = $company;
+}
+
+/**
+ * @param list<array{name:string,environment:string}> $companies
+ */
 function calculus_selected_company(array $companies, string $posted): string
 {
-    foreach ($companies as $row) {
-        if (strcasecmp($row['name'], $posted) === 0) {
-            return $row['name'];
+    $candidates = [
+        $posted,
+        trim((string) ($_SESSION['calculus_last_company'] ?? '')),
+        trim((string) ($GLOBALS['calculusDefaultCompany'] ?? '')),
+    ];
+    foreach ($candidates as $candidate) {
+        if ($candidate === '') {
+            continue;
         }
-    }
-
-    $preferred = trim((string) ($GLOBALS['calculusDefaultCompany'] ?? ''));
-    if ($preferred !== '') {
         foreach ($companies as $row) {
-            if (strcasecmp($row['name'], $preferred) === 0) {
+            if (strcasecmp($row['name'], $candidate) === 0) {
+                calculus_remember_company($row['name']);
+
                 return $row['name'];
             }
         }
@@ -62,11 +77,18 @@ function calculus_selected_company(array $companies, string $posted): string
 
     foreach ($companies as $row) {
         if (stripos($row['environment'], 'fat') !== false) {
+            calculus_remember_company($row['name']);
+
             return $row['name'];
         }
     }
 
-    return $companies[0]['name'] ?? '';
+    $fallback = $companies[0]['name'] ?? '';
+    if ($fallback !== '') {
+        calculus_remember_company($fallback);
+    }
+
+    return $fallback;
 }
 
 function calculus_environment_note(string $environment): string
@@ -194,6 +216,7 @@ try {
         $resolvedCompany = CompanyCatalog::resolve($postedCompany);
         $company = $resolvedCompany['name'];
         $environment = $resolvedCompany['environment'];
+        calculus_remember_company($company);
 
         $file = calculus_receive_upload();
         $parsed = BascalcParser::parse($file['path']);
