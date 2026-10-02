@@ -3,7 +3,7 @@
 Bron: tab **Invoer BC** (Excel-tabel).  
 Doel: RapidStart-pakket `NEWBUILD_CALCULATIE` / sheet `Projectbasislijnregel` / XML `LVS_JobChngeOrderBudgetLne`.
 
-De pakket-XML houdt veld `JobNo`. De OData-preview (Mímir en de directe leesactie) vraagt de gepubliceerde entity set `JobBaselineLines` met filter `Job_No`. De sheetnaam en de AL-objectnaam zijn geen OData-entity-sets.
+De pakket-XML houdt veld `JobNo`. De OData-preview én **Toepassen in BC** gebruiken de gepubliceerde entity set `JobBaselineLines` (filter/`Job_No`, zelfde service als in Tims `$metadata`-dump / FinRap). De sheetnaam en de AL-objectnaam (`LVS_JobChngeOrderBudgetLne` / UI Projectbasislijnregel) zijn geen OData-entity-sets. RapidStart-xlsx blijft beschikbaar als download.
 
 | Excel (`Invoer BC`) | RapidStart-header | XML-veld |
 |---|---|---|

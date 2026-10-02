@@ -452,7 +452,115 @@ final class BcAutomation
     }
 
     /**
-     * Volledige apply-flow. Gooit met letterlijke BC-fout bij falen.
+     * Schrijf basislijnregels via OData-entity JobBaselineLines (live $metadata / FinRap).
+     * Dit is de primaire "Toepassen in BC"-route; RapidStart blijft voor Excel-download.
+     *
+     * @param list<array<string, mixed>> $lines  BascalcParser-regels (na project-override)
+     * @return array{entity:string, created:int, failed:int, steps:list<string>, errors:list<string>}
+     */
+    public function postBaselineLines(string $jobNo, array $lines): array
+    {
+        $jobNo = strtoupper(trim($jobNo));
+        if ($jobNo === '' || $lines === []) {
+            throw new InvalidArgumentException('Geen project of regels om naar BC te schrijven.');
+        }
+
+        $entity = $this->baselineEntityCandidates()[0] ?? 'JobBaselineLines';
+        $url = $this->companyEntityUrl($entity);
+        $steps = ['OData POST → ' . $entity . ' @ ' . $this->environment];
+        $errors = [];
+        $created = 0;
+
+        foreach ($lines as $index => $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $body = $this->baselineLineToOdataBody($jobNo, $line);
+            try {
+                $this->requestJson('POST', $url, $body);
+                $created++;
+            } catch (Throwable $e) {
+                $msg = $e->getMessage();
+                if (preg_match('/"message"\s*:\s*"((?:\\\\.|[^"\\\\])*)"/', $msg, $m)) {
+                    $msg = stripcslashes($m[1]);
+                }
+                $rowLabel = 'rij ' . ($index + 1)
+                    . ' (taak ' . ($body['Job_Task_No'] ?? '?')
+                    . ', regel ' . ($body['Line_No'] ?? '?') . ')';
+                $errors[] = $rowLabel . ': ' . $msg;
+                // Stop niet hard bij 1 fout — verzamel en gooi aan het eind als niets lukte.
+            }
+        }
+
+        $failed = count($errors);
+        $steps[] = $created . ' regel(s) aangemaakt, ' . $failed . ' fout(en)';
+
+        if ($created === 0) {
+            throw new RuntimeException(
+                "Geen basislijnregels geschreven via OData ({$entity}).\n- " . implode("\n- ", $errors)
+            );
+        }
+        if ($failed > 0) {
+            throw new RuntimeException(
+                "Gedeeltelijk geschreven: {$created} ok, {$failed} mislukt.\n- " . implode("\n- ", $errors)
+            );
+        }
+
+        return [
+            'entity' => $entity,
+            'created' => $created,
+            'failed' => $failed,
+            'steps' => $steps,
+            'errors' => $errors,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $line
+     * @return array<string, scalar>
+     */
+    private function baselineLineToOdataBody(string $jobNo, array $line): array
+    {
+        // Alleen schrijfbare velden uit Tims OData-$metadata (JobBaselineLines).
+        // Read-only o.a.: Baseline_Version_Description*, Baseline_Version_in_Filter.
+        // Bin_Code alleen meenemen als gevuld — ongeldige bins geven Internal_InvalidTableRelation.
+        $body = [
+            'Job_No' => $jobNo,
+            'Job_Change_Order_No' => trim((string) ($line['job_change_order_no'] ?? '')),
+            'Baseline_Version_No' => (int) ($line['baseline_version_no'] ?? 1),
+            'Job_Task_No' => trim((string) ($line['job_task_no'] ?? '')),
+            'Configuration_No' => trim((string) ($line['configuration_no'] ?? '')),
+            'Configuration_Version_No' => (int) ($line['configuration_version_no'] ?? 0),
+            'Configuration_Line_No' => (int) ($line['configuration_line_no'] ?? 0),
+            'Line_No' => (int) ($line['line_no'] ?? 0),
+            'Line_Type' => trim((string) ($line['line_type'] ?? 'Budget')),
+            'Type' => trim((string) ($line['type'] ?? '')),
+            'No' => trim((string) ($line['no'] ?? '')),
+            'Description' => trim((string) ($line['description'] ?? '')),
+            'Quantity' => (float) ($line['quantity'] ?? 0),
+            'Unit_Cost' => (float) ($line['unit_cost'] ?? 0),
+            'Location_Code' => trim((string) ($line['location_code'] ?? '')),
+            'Work_Type_Code' => trim((string) ($line['work_type_code'] ?? '')),
+        ];
+
+        if ($body['Baseline_Version_No'] <= 0) {
+            $body['Baseline_Version_No'] = 1;
+        }
+        if ($body['Line_Type'] === '') {
+            $body['Line_Type'] = 'Budget';
+        }
+
+        $bin = trim((string) ($line['bin_code'] ?? ''));
+        // Projectnr. als bin faalt validatie; alleen echte bin-codes sturen.
+        if ($bin !== '' && strcasecmp($bin, $jobNo) !== 0) {
+            $body['Bin_Code'] = $bin;
+        }
+
+        return $body;
+    }
+
+    /**
+     * RapidStart/Automation apply-flow (secundair; Excel-download gebruikt het pakket).
      *
      * Automation API (MS docs): packageId = GUID, niet de package-code in quotes.
      * Upload: PATCH …/configurationPackages({id})/file('{code}')/content

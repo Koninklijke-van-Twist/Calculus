@@ -335,6 +335,7 @@ try {
             throw new InvalidArgumentException('Live-environment vereist expliciete bevestiging (checkbox).');
         }
 
+        // RapidStart-xlsx blijft beschikbaar als download/backup; schrijven gaat via OData.
         $pkg = calculus_build_package_from_session($session);
         $packagePath = $pkg['path'];
 
@@ -344,14 +345,14 @@ try {
 
         try {
             $bc = BcAutomation::fromGlobals($environment, $company);
-            $result = $bc->applyConfigurationPackage(RapidStartBuilder::PACKAGE_CODE, $packagePath);
+            $result = $bc->postBaselineLines($projectNo, $parsed['lines']);
             $bcResponse = json_encode($result, JSON_UNESCAPED_UNICODE);
             $status = 'applied';
-            $notes = 'Pakket geüpload/geïmporteerd/toegepast. Stappen: ' . implode('; ', $result['steps']);
+            $notes = 'OData JobBaselineLines: ' . implode('; ', $result['steps']);
         } catch (Throwable $e) {
             $bcResponse = $e->getMessage();
             $status = 'apply_failed';
-            $notes = 'Package staat klaar op schijf, apply mislukt.';
+            $notes = 'OData-apply mislukt; RapidStart-pakket staat klaar op schijf.';
             $flashError = 'BC-fout (letterlijk):\n' . $e->getMessage();
         }
 
