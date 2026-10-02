@@ -40,16 +40,17 @@ function calculus_user_email(): string
     return strtolower(trim((string) ($_SESSION['user']['email'] ?? 'unknown@local')));
 }
 
-/**
- * @param list<array{name:string,environment:string}> $companies
- */
 function calculus_remember_company(string $company): void
 {
     $company = trim($company);
     if ($company === '') {
         return;
     }
-    $_SESSION['calculus_last_company'] = $company;
+    try {
+        calculus_store()->setLastCompany(calculus_user_email(), $company);
+    } catch (Throwable) {
+        // voorkeur is niet kritiek voor de importflow
+    }
 }
 
 /**
@@ -57,9 +58,16 @@ function calculus_remember_company(string $company): void
  */
 function calculus_selected_company(array $companies, string $posted): string
 {
+    $saved = '';
+    try {
+        $saved = calculus_store()->getLastCompany(calculus_user_email());
+    } catch (Throwable) {
+        $saved = '';
+    }
+
     $candidates = [
         $posted,
-        trim((string) ($_SESSION['calculus_last_company'] ?? '')),
+        $saved,
         trim((string) ($GLOBALS['calculusDefaultCompany'] ?? '')),
     ];
     foreach ($candidates as $candidate) {

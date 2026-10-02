@@ -46,6 +46,49 @@ final class ImportStore
             'CREATE INDEX IF NOT EXISTS idx_imports_hash_project
              ON imports (file_sha256, project_no)'
         );
+        $this->pdo->exec(
+            'CREATE TABLE IF NOT EXISTS user_prefs (
+                user_email TEXT PRIMARY KEY,
+                last_company TEXT,
+                updated_at TEXT NOT NULL
+            )'
+        );
+    }
+
+    public function getLastCompany(string $userEmail): string
+    {
+        $email = strtolower(trim($userEmail));
+        if ($email === '') {
+            return '';
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT last_company FROM user_prefs WHERE user_email = :e LIMIT 1'
+        );
+        $stmt->execute([':e' => $email]);
+        $value = $stmt->fetchColumn();
+
+        return is_string($value) ? trim($value) : '';
+    }
+
+    public function setLastCompany(string $userEmail, string $company): void
+    {
+        $email = strtolower(trim($userEmail));
+        $company = trim($company);
+        if ($email === '' || $company === '') {
+            return;
+        }
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO user_prefs (user_email, last_company, updated_at)
+             VALUES (:e, :c, :u)
+             ON CONFLICT(user_email) DO UPDATE SET
+                last_company = excluded.last_company,
+                updated_at = excluded.updated_at'
+        );
+        $stmt->execute([
+            ':e' => $email,
+            ':c' => $company,
+            ':u' => gmdate('c'),
+        ]);
     }
 
     /**
