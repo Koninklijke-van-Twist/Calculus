@@ -5,10 +5,12 @@
 # Tim zet het exacte pad. Een lege waarde of een pad dat niet onder
 # /var/www/html/… ligt, stopt de job vóór lftp (scripts/guard-ftp-remote-dir.sh).
 #
-# cache/, uploads/ en data/ staan niet in de spiegel (serverdata blijft staan).
-# Die mappen worden daarom ook niet gechmod: Kothar doet dat niet, en chmod
-# op een uitgesloten pad faalt of raakt bestanden die deze job niet uploadt.
-# web/auth.php hoort alleen op de server (gitignored + exclude).
+# sqlite, Excel-pakketten, uploads en cache-JSON blijven op de server.
+# .htaccess en lege indexbestanden in data/, cache/ en uploads/ gaan wél mee,
+# anders blijft de directory listing en de anonieme download open.
+# lftp: het laatste passende patroon wint. Includes staan daarom ná de excludes.
+# Die mappen worden niet gechmod buiten de spiegel: Kothar doet dat niet.
+# web/auth.php en de root-.htaccess horen alleen op de server.
 
 name: Deploy to FTP on master push
 
@@ -27,6 +29,9 @@ jobs:
 
       - name: FTP remote dir guard
         run: bash tests/guard_ftp_remote_dir_test.sh
+
+      - name: Runtime directories stay closed
+        run: bash tests/protected_runtime_dirs_test.sh
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -70,10 +75,28 @@ jobs:
             --exclude-glob auth.php \
             --exclude-glob data/ \
             --exclude-glob data/** \
+            --exclude-glob data/packages/ \
+            --exclude-glob data/packages/** \
             --exclude-glob cache/ \
             --exclude-glob cache/** \
             --exclude-glob uploads/ \
             --exclude-glob uploads/** \
+            --include-glob data/ \
+            --include-glob data/.htaccess \
+            --include-glob data/index.html \
+            --include-glob data/index.php \
+            --include-glob data/packages/ \
+            --include-glob data/packages/.htaccess \
+            --include-glob data/packages/index.html \
+            --include-glob data/packages/index.php \
+            --include-glob cache/ \
+            --include-glob cache/.htaccess \
+            --include-glob cache/index.html \
+            --include-glob cache/index.php \
+            --include-glob uploads/ \
+            --include-glob uploads/.htaccess \
+            --include-glob uploads/index.html \
+            --include-glob uploads/index.php \
             ./web .
 
           bye

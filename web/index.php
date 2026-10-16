@@ -40,6 +40,13 @@ function calculus_user_email(): string
     return strtolower(trim((string) ($_SESSION['user']['email'] ?? 'unknown@local')));
 }
 
+function calculus_release_session_lock(): void
+{
+    if (function_exists('session_status') && function_exists('session_write_close') && session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+}
+
 function calculus_remember_company(string $company): void
 {
     $company = trim($company);
@@ -306,6 +313,9 @@ try {
         ]);
 
         // Houd preview vast zodat "Toepassen in BC" daarna nog kan.
+        // De logincheck is al gebeurd; het sessiebestand niet vasthouden
+        // terwijl het pakket naar de browser gaat.
+        calculus_release_session_lock();
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment; filename="' . $pkg['basename'] . '"');
         header('Content-Length: ' . (string) filesize($pkg['path']));
@@ -395,11 +405,14 @@ try {
     }
 
     if ($action === 'download_package' && isset($_GET['file'])) {
+        // data/packages is via HTTP dicht. Dit endpoint leest het bestand
+        // van schijf, na logincheck.php hierboven.
         $base = basename((string) $_GET['file']);
         $path = __DIR__ . '/data/packages/' . $base;
         if (!is_file($path) || !str_ends_with(strtolower($base), '.xlsx')) {
             throw new InvalidArgumentException('Package niet gevonden.');
         }
+        calculus_release_session_lock();
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment; filename="' . $base . '"');
         header('Content-Length: ' . (string) filesize($path));
