@@ -3,7 +3,7 @@
 // kvt_protect_dirs.php: zet .htaccess/index.* neer als ze ontbreken, laat bestaande bestanden staan.
 $root = dirname(__DIR__);
 $tmp = sys_get_temp_dir() . '/kvt-protect-' . bin2hex(random_bytes(4));
-foreach (['cache/odata', 'cache/usersettings', 'data/user_prefs'] as $d) {
+foreach (['cache/odata', 'cache/usersettings', 'data/user_prefs', 'analytics'] as $d) {
     mkdir($tmp . '/' . $d, 0777, true);
 }
 file_put_contents($tmp . '/data/index.html', 'bestaand');
@@ -28,6 +28,11 @@ foreach (['cache', 'cache/odata', 'cache/usersettings', 'data', 'data/user_prefs
 }
 if (file_get_contents($tmp . '/data/index.html') !== 'bestaand') {
     fwrite(STDERR, "FAIL: bestaand bestand overschreven\n");
+    exit(1);
+}
+$aht = (string) @file_get_contents($tmp . '/analytics/.htaccess');
+if (strpos($aht, 'sqlite') === false || strpos($aht, 'FilesMatch') === false || strpos($aht, 'Require all denied') === false) {
+    fwrite(STDERR, "FAIL: analytics/.htaccess weigert sqlite niet\n");
     exit(1);
 }
 $workflow = (string) file_get_contents($root . '/.github/workflows/deploy-ftp.yml');
