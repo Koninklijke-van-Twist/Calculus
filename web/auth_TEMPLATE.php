@@ -49,6 +49,13 @@ $allowedUsers = [
 
 $ictUsers = $allowedUsers;
 
+// Optioneel, alleen als een HTTP-runner een actie zonder browsersessie moet
+// aanroepen. Header X-Calculus-Secret moet exact dit geheim zijn.
+// Weglaten of leeg: geen anonieme toegang. Geen queryparameter.
+// CLI (php web/index.php) heeft dit niet nodig. Calculus heeft geen nightly
+// in deze repo; het geheim is er voor een runner op de server.
+// $calculusRunnerSecret = '';
+
 // Exacte BC company-naam (geen "KVT" op live/FAT; wel "Koninklijke van Twist")
 $calculusDefaultCompany = 'Koninklijke van Twist';
 

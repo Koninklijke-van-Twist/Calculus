@@ -14,10 +14,6 @@ require __DIR__ . '/lib/ImportStore.php';
 require __DIR__ . '/lib/BcAutomation.php';
 require __DIR__ . '/lib/CompanyCatalog.php';
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
-
 const CALCULUS_TEMPLATE = __DIR__ . '/templates/NEWBUILD_CALCULATIE_template.xlsx';
 
 function calculus_h(?string $value): string
@@ -37,7 +33,13 @@ function calculus_existing_via(?string $source): string
 
 function calculus_user_email(): string
 {
-    return strtolower(trim((string) ($_SESSION['user']['email'] ?? 'unknown@local')));
+    $user = calculus_session_bag()['user'] ?? null;
+    $email = '';
+    if (is_array($user)) {
+        $email = strtolower(trim((string) ($user['email'] ?? '')));
+    }
+
+    return $email !== '' ? $email : 'unknown@local';
 }
 
 function calculus_remember_company(string $company): void
@@ -176,12 +178,14 @@ function calculus_apply_project(array $parsed, string $projectNo): array
  */
 function calculus_require_preview_session(string $token): array
 {
-    $session = $_SESSION['calculus_preview'] ?? null;
-    if (!is_array($session) || !hash_equals((string) ($session['token'] ?? ''), $token)) {
+    $session = calculus_session_bag()['calculus_preview'] ?? null;
+    if ($token === '' || !is_array($session) || !hash_equals((string) ($session['token'] ?? ''), $token)) {
         throw new InvalidArgumentException('Preview verlopen of ongeldig. Maak opnieuw een voorbeeld.');
     }
     if ((time() - (int) ($session['created'] ?? 0)) > 3600) {
-        unset($_SESSION['calculus_preview']);
+        calculus_persist_session(static function (): void {
+            unset($_SESSION['calculus_preview']);
+        });
         throw new InvalidArgumentException('Preview ouder dan 1 uur. Maak opnieuw een voorbeeld.');
     }
 
@@ -257,7 +261,7 @@ try {
         }
 
         $token = bin2hex(random_bytes(16));
-        $_SESSION['calculus_preview'] = [
+        $previewPayload = [
             'token' => $token,
             'created' => time(),
             'file' => $file,
@@ -271,8 +275,11 @@ try {
             'existing_error' => $existingError,
             'existing_source' => $existingSource,
         ];
+        calculus_persist_session(static function () use ($previewPayload): void {
+            $_SESSION['calculus_preview'] = $previewPayload;
+        });
 
-        $preview = $_SESSION['calculus_preview'];
+        $preview = $previewPayload;
         $preview['previous'] = $previous;
         $preview['existing_lines'] = $existingLines;
     }
@@ -391,19 +398,25 @@ try {
             'environment' => $environment,
             'bc_response' => $bcResponse,
         ];
-        unset($_SESSION['calculus_preview']);
+        calculus_persist_session(static function (): void {
+            unset($_SESSION['calculus_preview']);
+        });
     }
 
     if ($action === 'download_package' && isset($_GET['file'])) {
+        // /data/packages/*.xlsx is met .htaccess dicht. Dit is het enige
+        // downloadpad en het draait ná logincheck.php.
         $base = basename((string) $_GET['file']);
-        $path = __DIR__ . '/data/packages/' . $base;
-        if (!is_file($path) || !str_ends_with(strtolower($base), '.xlsx')) {
+        $realPath = calculus_safe_package_path(__DIR__ . '/data/packages', $base);
+        if ($realPath === null) {
             throw new InvalidArgumentException('Package niet gevonden.');
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment; filename="' . $base . '"');
-        header('Content-Length: ' . (string) filesize($path));
-        readfile($path);
+        header('Content-Length: ' . (string) filesize($realPath));
+        header('Cache-Control: no-store');
+        header('X-Content-Type-Options: nosniff');
+        readfile($realPath);
         exit;
     }
 } catch (Throwable $e) {
