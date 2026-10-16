@@ -41,8 +41,16 @@ web/
   lib/MimirClient.php    Mímir query-client en circuit breaker
   lib/CompanyCatalog.php bedrijvenlijst en bedrijf → environment
   templates/NEWBUILD_CALCULATIE_template.xlsx
-  data/                  runtime (sqlite, packages) — niet in git
+  data/                  runtime (sqlite, packages) — niet in git, HTTP dicht
+  cache/                 runtime — HTTP dicht
+  uploads/               geüploade BASCALC — HTTP dicht
 ```
+
+## Afscherming
+
+`data/`, `data/packages/`, `cache/` en `uploads/` antwoorden met 403 (`Options -Indexes`, `Require all denied`, `Deny from all`) plus een lege `index.html` / `index.php`. De SQLite-audit en de RapidStart-pakketten blijven op de server; de FTP-spiegel slaat die mappen over. Alleen de afschermingsbestanden gaan mee via `put`, zonder `--delete`.
+
+Een ingelogde gebruiker downloadt een pakket via `?action=download_package` (zelfde login als de UI: `login/lib.php` en `$allowedUsers`). Na die check gaat het sessiebestand dicht. CLI en een optioneel runnergeheim (`$calculusRunnerSecret` of `CALCULUS_RUNNER_SECRET`, header `X-Calculus-Secret`) slaan de login over; een leeg geheim telt niet. Calculus heeft geen `odata.php` en geen `cache_status`.
 
 ## Configuratie
 

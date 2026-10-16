@@ -1,53 +1,52 @@
 <?php
 
-// Altijd sessie starten: dry-run preview + download hangen hiervan af,
-// ook op localhost waar SSO wordt overgeslagen.
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
+declare(strict_types=1);
 
-function is_trusted_requester(): bool
-{
+require_once __DIR__ . '/lib/ActionAccess.php';
+
+// Preview en download hangen aan de sessie. De lock gaat direct na deze
+// check dicht, zodat een trage BC-call andere verzoeken van dezelfde
+// gebruiker niet blokkeert. De preview wordt later kort heropend om te bewaren.
+// CLI en een runnergeheim slaan SSO over (nightly). Loopback blijft voor lokaal.
+
+if (!calculus_request_skips_login()) {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+
     $remote = $_SERVER['REMOTE_ADDR'] ?? '';
-    $server = $_SERVER['SERVER_ADDR'] ?? '';
-    $trusted = ['127.0.0.1', '::1'];
-    if ($remote === $server && $remote !== '') {
-        return true;
-    }
-    if (in_array($remote, $trusted, true)) {
-        return true;
+    if (!is_string($remote)) {
+        $remote = '';
     }
 
-    return false;
+    if (calculus_is_trusted_requester($remote)) {
+        if (!isset($_SESSION['user']) || !is_array($_SESSION['user'])) {
+            $_SESSION['user'] = [
+                'email' => 'local@dev',
+                'name' => 'Local Dev',
+            ];
+        }
+    } else {
+        $loginLib = __DIR__ . '/../login/lib.php';
+        if (!is_file($loginLib)) {
+            calculus_deny_web_access();
+        }
+        require $loginLib;
+
+        $email = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
+        if (!calculus_email_is_allowed($email, $allowedUsers ?? null)) {
+            $forbidden = __DIR__ . '/../login/403.php';
+            if (is_file($forbidden)) {
+                require $forbidden;
+                die();
+            }
+            calculus_deny_web_access();
+        }
+
+        if (isset($ictUsers) && calculus_email_is_allowed($email, $ictUsers)) {
+            $_SESSION['user']['admin'] = true;
+        }
+    }
 }
 
-if (is_trusted_requester()) {
-    if (!isset($_SESSION['user']) || !is_array($_SESSION['user'])) {
-        $_SESSION['user'] = [
-            'email' => 'local@dev',
-            'name' => 'Local Dev',
-        ];
-    }
-} else {
-    require __DIR__ . '/../login/lib.php';
-
-    if (
-        isset($allowedUsers) &&
-        !array_any($allowedUsers, static function ($email) {
-            return strtolower((string) $email) === strtolower((string) ($_SESSION['user']['email'] ?? ''));
-        })
-    ) {
-        require __DIR__ . '/../login/403.php';
-        die();
-    }
-
-    if (
-        isset($ictUsers) &&
-        is_array($ictUsers) &&
-        array_any($ictUsers, static function ($email) {
-            return strtolower((string) $email) === strtolower((string) ($_SESSION['user']['email'] ?? ''));
-        })
-    ) {
-        $_SESSION['user']['admin'] = true;
-    }
-}
+calculus_release_session_lock();
