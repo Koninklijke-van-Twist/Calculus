@@ -46,7 +46,9 @@ assert_same(true, calculus_email_is_allowed('Analyst@kvt.nl', $allowed), 'lijst-
 assert_same(true, calculus_email_is_allowed('planner@kvt.nl', $allowed), 'map-gebruiker');
 assert_same(false, calculus_email_is_allowed('andere@kvt.nl', $allowed), 'niet op de lijst');
 assert_same(false, calculus_email_is_allowed('', $allowed), 'lege sessie');
-assert_same(false, calculus_email_is_allowed('analyst@kvt.nl', null), 'geen whitelist');
+assert_same(true, calculus_email_is_allowed('analyst@kvt.nl', null), 'geen whitelist: elke ingelogde gebruiker');
+assert_same(true, calculus_email_is_allowed('analyst@kvt.nl', []), 'lege whitelist: elke ingelogde gebruiker');
+assert_same(false, calculus_email_is_allowed('', null), 'geen whitelist, geen sessie');
 
 assert_same(true, calculus_action_skips_login('cli', '', ''), 'cli zonder geheim');
 assert_same(false, calculus_action_skips_login('fpm-fcgi', '', ''), 'web anoniem');
