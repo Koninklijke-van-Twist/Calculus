@@ -46,6 +46,12 @@ jobs:
           FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
         run: bash scripts/guard-ftp-remote-dir.sh
 
+      # Deploy-guard: draait hetzelfde mirror-commando tegen een nep-server (file://) met
+      # dummybestanden op de paden uit .github/deploy-protected.txt. Faalt als er iets
+      # beschermds verdwijnt of overschreven wordt; dan draait de FTP-stap niet.
+      - name: Deploy-guard (beschermde server-paden)
+        run: bash .github/deploy-guard.sh .github/workflows/deploy-ftp.yml
+
       - name: Deploy web/ to FTP (with delete & excludes)
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}

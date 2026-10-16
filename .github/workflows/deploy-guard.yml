@@ -1,0 +1,19 @@
+name: Deploy-guard
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - master
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lftp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lftp
+      - name: Deploy-guard (beschermde server-paden)
+        run: bash .github/deploy-guard.sh .github/workflows/deploy-ftp.yml
