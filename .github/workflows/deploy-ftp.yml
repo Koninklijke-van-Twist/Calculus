@@ -6,10 +6,7 @@
 # /var/www/html/… ligt, stopt de job vóór lftp (scripts/guard-ftp-remote-dir.sh).
 #
 # cache/, uploads/ en data/ staan niet in de spiegel (serverdata blijft staan).
-# sqlite, Excel-pakketten en uploads worden dus niet overschreven of verwijderd.
-# .htaccess, index.html en index.php in die mappen gaan wél mee, via put ná
-# de spiegel (geen --delete op die put). De root-.htaccess blijft op de server.
-# Die mappen worden ook niet gechmod: Kothar doet dat niet, en chmod
+# Die mappen worden daarom ook niet gechmod: Kothar doet dat niet, en chmod
 # op een uitgesloten pad faalt of raakt bestanden die deze job niet uploadt.
 # web/auth.php hoort alleen op de server (gitignored + exclude).
 
@@ -31,17 +28,6 @@ jobs:
       - name: FTP remote dir guard
         run: bash tests/guard_ftp_remote_dir_test.sh
 
-      - name: Install PHP
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y php-cli php-cgi php-xml php-sqlite3 php-zip php-curl
-
-      - name: App and access tests
-        run: |
-          php tests/action_access_test.php
-          php tests/company_catalog_test.php
-          php tests/mimir_fallback_test.php
-
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: test
@@ -59,6 +45,12 @@ jobs:
         env:
           FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
         run: bash scripts/guard-ftp-remote-dir.sh
+
+      # Deploy-guard: draait hetzelfde mirror-commando tegen een nep-server (file://) met
+      # dummybestanden op de paden uit .github/deploy-protected.txt. Faalt als er iets
+      # beschermds verdwijnt of overschreven wordt; dan draait de FTP-stap niet.
+      - name: Deploy-guard (beschermde server-paden)
+        run: bash .github/deploy-guard.sh .github/workflows/deploy-ftp.yml
 
       - name: Deploy web/ to FTP (with delete & excludes)
         env:
@@ -78,8 +70,6 @@ jobs:
 
           cd "$FTP_REMOTE_DIR"
 
-          # data/, cache/ en uploads/ blijven buiten de spiegel.
-          # --delete laat uitgesloten bestanden staan.
           mirror -R --delete \
             --exclude-glob .htaccess \
             --exclude-glob .htpasswd \
@@ -91,27 +81,6 @@ jobs:
             --exclude-glob uploads/ \
             --exclude-glob uploads/** \
             ./web .
-
-          # Alleen de afscherming. put overschrijft dat ene bestand,
-          # niet calculus.sqlite en niet packages/*.xlsx.
-          set cmd:fail-exit false
-          mkdir -f -p data
-          mkdir -f -p data/packages
-          mkdir -f -p cache
-          mkdir -f -p uploads
-          set cmd:fail-exit true
-          put -O data web/data/.htaccess
-          put -O data web/data/index.html
-          put -O data web/data/index.php
-          put -O data/packages web/data/packages/.htaccess
-          put -O data/packages web/data/packages/index.html
-          put -O data/packages web/data/packages/index.php
-          put -O cache web/cache/.htaccess
-          put -O cache web/cache/index.html
-          put -O cache web/cache/index.php
-          put -O uploads web/uploads/.htaccess
-          put -O uploads web/uploads/index.html
-          put -O uploads web/uploads/index.php
 
           bye
           EOF

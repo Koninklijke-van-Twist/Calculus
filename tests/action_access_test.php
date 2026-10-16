@@ -46,7 +46,9 @@ assert_same(true, calculus_email_is_allowed('Analyst@kvt.nl', $allowed), 'lijst-
 assert_same(true, calculus_email_is_allowed('planner@kvt.nl', $allowed), 'map-gebruiker');
 assert_same(false, calculus_email_is_allowed('andere@kvt.nl', $allowed), 'niet op de lijst');
 assert_same(false, calculus_email_is_allowed('', $allowed), 'lege sessie');
-assert_same(false, calculus_email_is_allowed('analyst@kvt.nl', null), 'geen whitelist');
+assert_same(true, calculus_email_is_allowed('analyst@kvt.nl', null), 'geen whitelist: elke ingelogde gebruiker');
+assert_same(true, calculus_email_is_allowed('analyst@kvt.nl', []), 'lege whitelist: elke ingelogde gebruiker');
+assert_same(false, calculus_email_is_allowed('', null), 'geen whitelist, geen sessie');
 
 assert_same(true, calculus_action_skips_login('cli', '', ''), 'cli zonder geheim');
 assert_same(false, calculus_action_skips_login('fpm-fcgi', '', ''), 'web anoniem');
@@ -217,48 +219,7 @@ foreach ($guardDirs as $dir) {
     }
 }
 
-$workflow = (string) file_get_contents($root . '/.github/workflows/deploy-ftp.yml');
-$mirrorAt = strpos($workflow, 'mirror -R --delete');
-$putAt = strpos($workflow, 'put -O data web/data/.htaccess');
-$excludeDataAt = strpos($workflow, '--exclude-glob data/**');
-$excludeCacheAt = strpos($workflow, '--exclude-glob cache/**');
-$excludeUploadsAt = strpos($workflow, '--exclude-glob uploads/**');
-if ($mirrorAt === false || $putAt === false || $excludeDataAt === false) {
-    fail('ftp-deploy mist spiegel of put');
-}
-if ($putAt < $mirrorAt || $putAt < $excludeDataAt || $putAt < $excludeCacheAt || $putAt < $excludeUploadsAt) {
-    fail('afscherming moet ná de excludes, de spiegel zelf laat data met rust');
-}
-assert_not_contains($workflow, '--delete-excluded', 'ftp-deploy');
-assert_not_contains($workflow, '--include-glob data/**', 'ftp-deploy');
-assert_not_contains($workflow, 'put -O data web/data/calculus.sqlite', 'ftp-deploy');
-assert_not_contains($workflow, 'put -O data/packages web/data/packages/*.xlsx', 'ftp-deploy');
-foreach ([
-    '--exclude-glob .htaccess',
-    '--exclude-glob auth.php',
-    '--exclude-glob data/',
-    '--exclude-glob data/**',
-    '--exclude-glob cache/',
-    '--exclude-glob cache/**',
-    '--exclude-glob uploads/',
-    '--exclude-glob uploads/**',
-    'put -O data web/data/.htaccess',
-    'put -O data web/data/index.html',
-    'put -O data web/data/index.php',
-    'put -O data/packages web/data/packages/.htaccess',
-    'put -O data/packages web/data/packages/index.html',
-    'put -O data/packages web/data/packages/index.php',
-    'put -O cache web/cache/.htaccess',
-    'put -O cache web/cache/index.html',
-    'put -O cache web/cache/index.php',
-    'put -O uploads web/uploads/.htaccess',
-    'put -O uploads web/uploads/index.html',
-    'put -O uploads web/uploads/index.php',
-    'mkdir -f -p data',
-    'mkdir -f -p data/packages',
-] as $needle) {
-    assert_contains($workflow, $needle, 'ftp-deploy');
-}
+// FTP-deploy en afscherming: zie tests/protect_dirs_test.php.
 
 $tracked = [
     'web/data/.htaccess',

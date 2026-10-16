@@ -14,8 +14,13 @@ declare(strict_types=1);
 function calculus_email_is_allowed(string $email, mixed $allowedUsers): bool
 {
     $email = strtolower(trim($email));
-    if ($email === '' || !is_array($allowedUsers)) {
+    if ($email === '') {
         return false;
+    }
+    // Zelfde semantiek als de oude logincheck: ontbreekt de lijst of is die
+    // leeg, dan mag elke ingelogde gebruiker erin.
+    if (!is_array($allowedUsers) || $allowedUsers === []) {
+        return true;
     }
 
     foreach ($allowedUsers as $emailKey => $value) {
