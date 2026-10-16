@@ -3,26 +3,13 @@
 /**
  * Zet de afscherming van server-only mappen (cache/, data/, uploads/) neer als
  * die ontbreekt. De FTP-deploy sluit deze mappen uit (geen --delete-risico),
- * dus de app schrijft .htaccess / index.html / index.php zelf. Ontbreekt een
- * topmap nog, dan maken we die eerst aan: hetzelfde verzoek schrijft daarna
- * sqlite, cache, uploads en pakketten, en die mogen niet open blijven liggen
- * tot een volgende PHP-hit. Aan het eind van het verzoek volgt een tweede
- * ronde voor submappen die pas later ontstaan. Idempotent: bestaande
- * bestanden worden niet aangeraakt.
+ * dus de app schrijft .htaccess / index.html / index.php zelf. Idempotent:
+ * bestaande bestanden worden niet aangeraakt.
  */
 if (!function_exists('kvt_ensure_protected_dirs')) {
     function kvt_ensure_protected_dirs(?string $webRoot = null): void
     {
-        static $shutdownRegistered = false;
-
         $webRoot = $webRoot ?? __DIR__;
-        if (!$shutdownRegistered) {
-            $shutdownRegistered = true;
-            register_shutdown_function(static function () use ($webRoot): void {
-                kvt_ensure_protected_dirs($webRoot);
-            });
-        }
-
         $files = [
             '.htaccess' => "Options -Indexes\n"
                 . "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n"
@@ -33,7 +20,7 @@ if (!function_exists('kvt_ensure_protected_dirs')) {
 
         foreach (['cache', 'data', 'uploads'] as $top) {
             $topDir = $webRoot . '/' . $top;
-            if (!is_dir($topDir) && !@mkdir($topDir, 0775, true) && !is_dir($topDir)) {
+            if (!is_dir($topDir)) {
                 continue;
             }
             $dirs = [$topDir];
@@ -52,4 +39,10 @@ if (!function_exists('kvt_ensure_protected_dirs')) {
     }
 }
 
-kvt_ensure_protected_dirs();
+// Bij het laden én aan het eind van het request: mappen die tijdens dit request
+// ontstaan (cache/odata, data/..., uploads/...) krijgen zo meteen hun afscherming.
+if (!defined('KVT_PROTECT_DIRS_REGISTERED')) {
+    define('KVT_PROTECT_DIRS_REGISTERED', true);
+    kvt_ensure_protected_dirs();
+    register_shutdown_function('kvt_ensure_protected_dirs');
+}
