@@ -1,0 +1,16 @@
+---
+description: Na afronden van werk committen en pushen naar master (FTP-deploy)
+alwaysApply: true
+---
+
+# Commit & push wanneer klaar
+
+Als een taak af is (feature, fix, docs) en er zijn relevante wijzigingen:
+
+1. Commit met een korte boodschap (waarom, niet alleen wat).
+2. Push naar `master` zodat de GitHub Action FTP-deploy draait.
+3. Gebruik SSH als HTTPS-auth faalt: `git@github.com:Koninklijke-van-Twist/Calculus.git`.
+4. Wacht of check kort of de deploy-workflow slaagt als de wijziging live moet.
+
+Niet committen: secrets, `web/auth.php`, runtime-data onder `data/` / `cache/` / `uploads/`.
+Vraag niet om toestemming voor commit/push tenzij iets destructief is (force push, amend van andermans commit).
