@@ -49,6 +49,20 @@ assert_same(false, calculus_email_is_allowed('', $allowed), 'lege sessie');
 assert_same(true, calculus_email_is_allowed('analyst@kvt.nl', null), 'geen whitelist: elke ingelogde gebruiker');
 assert_same(true, calculus_email_is_allowed('analyst@kvt.nl', []), 'lege whitelist: elke ingelogde gebruiker');
 assert_same(false, calculus_email_is_allowed('', null), 'geen whitelist, geen sessie');
+assert_same(true, calculus_email_is_allowed('opesket@kvt.nl', ['andere@kvt.nl']), 'vaste admin altijd allowed');
+assert_same(true, calculus_email_is_admin('Opesket@kvt.nl'), 'admin opesket');
+assert_same(true, calculus_email_is_admin('tfalken@kvt.nl'), 'admin tfalken');
+assert_same(false, calculus_email_is_admin('tim@kvt.nl'), 'tim is geen vaste admin');
+assert_same(
+    ['analyst@kvt.nl', 'planner@kvt.nl'],
+    calculus_normalize_allowed_emails($allowed),
+    'normaliseer allowlist'
+);
+assert_same(true, calculus_email_may_access('opesket@kvt.nl', [], ['niemand@kvt.nl']), 'admin mag altijd');
+assert_same(true, calculus_email_may_access('analyst@kvt.nl', [], $allowed), 'lege store → auth.php');
+assert_same(false, calculus_email_may_access('andere@kvt.nl', [], $allowed), 'lege store, niet in auth');
+assert_same(true, calculus_email_may_access('nieuw@kvt.nl', ['nieuw@kvt.nl'], $allowed), 'store wint');
+assert_same(false, calculus_email_may_access('analyst@kvt.nl', ['nieuw@kvt.nl'], $allowed), 'niet in store na beheer');
 
 assert_same(true, calculus_action_skips_login('cli', '', ''), 'cli zonder geheim');
 assert_same(false, calculus_action_skips_login('fpm-fcgi', '', ''), 'web anoniem');
@@ -171,7 +185,7 @@ if (is_file($root . '/web/odata.php')) {
 }
 
 $login = (string) file_get_contents($root . '/web/logincheck.php');
-$emailAt = strpos($login, 'calculus_email_is_allowed');
+$emailAt = strpos($login, 'calculus_email_may_access');
 $releaseAt = strpos($login, 'calculus_release_session_lock()');
 $libAt = strpos($login, 'login/lib.php');
 if ($emailAt === false || $releaseAt === false || $libAt === false || $releaseAt < $emailAt) {
@@ -179,9 +193,18 @@ if ($emailAt === false || $releaseAt === false || $libAt === false || $releaseAt
 }
 assert_contains($login, 'calculus_request_skips_login()', 'cli of runnergeheim');
 assert_contains($login, 'calculus_is_trusted_requester', 'loopback voor lokaal');
+assert_contains($login, 'calculus_email_may_access', 'effectieve allowlist');
+assert_contains($login, 'calculus_email_is_admin', 'vaste admins');
 assert_not_contains($login, '$remote === $server', 'geen remote==server bypass');
 assert_not_contains($login, '$_GET', 'geheim niet uit de query');
 assert_contains($login, 'calculus_deny_web_access()', 'ontbrekende login-lib geeft geen data');
+
+$indexAdmin = (string) file_get_contents($root . '/web/index.php');
+assert_contains($indexAdmin, "\$action === 'admin'", 'admin-panel actie');
+assert_contains($indexAdmin, 'admin_add_user', 'gebruiker toevoegen');
+assert_contains($indexAdmin, 'admin_remove_user', 'gebruiker intrekken');
+assert_contains($indexAdmin, 'calculus_require_admin', 'admin-gate op acties');
+assert_contains($indexAdmin, 'Gebruikersbeheer', 'admin-UI');
 
 $access = (string) file_get_contents($root . '/web/lib/ActionAccess.php');
 assert_contains($access, 'session_write_close()', 'sessie wordt gesloten');

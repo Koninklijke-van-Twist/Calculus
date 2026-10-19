@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/kvt_protect_dirs.php';
 
 require_once __DIR__ . '/lib/ActionAccess.php';
+require_once __DIR__ . '/lib/ImportStore.php';
 
 // Preview en download hangen aan de sessie. De lock gaat direct na deze
 // check dicht, zodat een trage BC-call andere verzoeken van dezelfde
@@ -35,7 +36,13 @@ if (!calculus_request_skips_login()) {
         require $loginLib;
 
         $email = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
-        if (!calculus_email_is_allowed($email, $allowedUsers ?? null)) {
+        $managedEmails = [];
+        try {
+            $managedEmails = (new ImportStore(__DIR__ . '/data/calculus.sqlite'))->listAllowedEmails();
+        } catch (Throwable) {
+            $managedEmails = [];
+        }
+        if (!calculus_email_may_access($email, $managedEmails, $allowedUsers ?? null)) {
             $forbidden = __DIR__ . '/../login/403.php';
             if (is_file($forbidden)) {
                 require $forbidden;
@@ -44,9 +51,8 @@ if (!calculus_request_skips_login()) {
             calculus_deny_web_access();
         }
 
-        if (isset($ictUsers) && calculus_email_is_allowed($email, $ictUsers)) {
-            $_SESSION['user']['admin'] = true;
-        }
+        // Admin-panel: alleen vaste Calculus-admins, niet $ictUsers uit auth.php.
+        $_SESSION['user']['admin'] = calculus_email_is_admin($email);
     }
 }
 

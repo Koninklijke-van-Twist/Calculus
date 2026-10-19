@@ -6,7 +6,58 @@ declare(strict_types=1);
  * Login-gate voor Calculus-acties, zelfde patroon als Hermes odata.php.
  * login/lib.php + $allowedUsers, daarna het sessiebestand loslaten.
  * CLI en een niet-leeg runnergeheim zijn de enige anonieme bypass.
+ *
+ * Beheer van de allowlist (admin-panel) is beperkt tot vaste admins;
+ * die staan niet in auth.php en zijn niet via de UI te wijzigen.
  */
+
+/**
+ * Vaste Calculus-admins. Alleen deze accounts zien en wijzigen de allowlist.
+ *
+ * @return list<string>
+ */
+function calculus_admin_emails(): array
+{
+    return [
+        'opesket@kvt.nl',
+        'tfalken@kvt.nl',
+    ];
+}
+
+function calculus_email_is_admin(string $email): bool
+{
+    $email = strtolower(trim($email));
+    if ($email === '') {
+        return false;
+    }
+
+    return in_array($email, calculus_admin_emails(), true);
+}
+
+/**
+ * Normaliseer een allowlist uit auth.php of de UI naar lowercase e-mails.
+ *
+ * @param mixed $allowedUsers
+ * @return list<string>
+ */
+function calculus_normalize_allowed_emails(mixed $allowedUsers): array
+{
+    if (!is_array($allowedUsers) || $allowedUsers === []) {
+        return [];
+    }
+
+    $emails = [];
+    foreach ($allowedUsers as $emailKey => $value) {
+        $allowedEmail = is_int($emailKey) ? (string) $value : (string) $emailKey;
+        $allowedEmail = strtolower(trim($allowedEmail));
+        if ($allowedEmail === '' || !filter_var($allowedEmail, FILTER_VALIDATE_EMAIL)) {
+            continue;
+        }
+        $emails[$allowedEmail] = true;
+    }
+
+    return array_keys($emails);
+}
 
 /**
  * @param mixed $allowedUsers
@@ -16,6 +67,9 @@ function calculus_email_is_allowed(string $email, mixed $allowedUsers): bool
     $email = strtolower(trim($email));
     if ($email === '') {
         return false;
+    }
+    if (calculus_email_is_admin($email)) {
+        return true;
     }
     // Zelfde semantiek als de oude logincheck: ontbreekt de lijst of is die
     // leeg, dan mag elke ingelogde gebruiker erin.
@@ -31,6 +85,29 @@ function calculus_email_is_allowed(string $email, mixed $allowedUsers): bool
     }
 
     return false;
+}
+
+/**
+ * Effectieve toegang: vaste admins altijd; als de SQLite-allowlist rijen heeft
+ * is die leidend; anders valt terug op auth.php ($allowedUsers).
+ *
+ * @param list<string> $managedEmails
+ * @param mixed $authAllowedUsers
+ */
+function calculus_email_may_access(string $email, array $managedEmails, mixed $authAllowedUsers): bool
+{
+    $email = strtolower(trim($email));
+    if ($email === '') {
+        return false;
+    }
+    if (calculus_email_is_admin($email)) {
+        return true;
+    }
+    if ($managedEmails !== []) {
+        return in_array($email, $managedEmails, true);
+    }
+
+    return calculus_email_is_allowed($email, $authAllowedUsers);
 }
 
 function calculus_action_skips_login(string $sapi, string $presentedSecret, string $serverSecret): bool

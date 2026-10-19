@@ -43,6 +43,36 @@ function calculus_user_email(): string
     return $email !== '' ? $email : 'unknown@local';
 }
 
+function calculus_user_is_admin(): bool
+{
+    return calculus_email_is_admin(calculus_user_email());
+}
+
+/**
+ * Eerste openen van het admin-panel: kopieer auth.php-$allowedUsers naar SQLite
+ * zodat de UI meteen de huidige lijst toont. Daarna is SQLite leidend.
+ *
+ * @param mixed $authAllowedUsers
+ */
+function calculus_seed_access_from_auth(ImportStore $store, mixed $authAllowedUsers): void
+{
+    if ($store->listAllowedEmails() !== []) {
+        return;
+    }
+    $seed = calculus_normalize_allowed_emails($authAllowedUsers);
+    if ($seed === []) {
+        return;
+    }
+    $store->seedAllowedUsers($seed, 'auth.php');
+}
+
+function calculus_require_admin(): void
+{
+    if (!calculus_user_is_admin()) {
+        throw new RuntimeException('Alleen Calculus-admins mogen gebruikersbeheer openen.');
+    }
+}
+
 function calculus_remember_company(string $company): void
 {
     $company = trim($company);
@@ -214,10 +244,42 @@ function calculus_build_package_from_session(array $session): array
 $flashError = '';
 $flashOk = '';
 $preview = null;
+$showAdmin = false;
+$adminUsers = [];
 
 $action = trim((string) ($_POST['action'] ?? $_GET['action'] ?? ''));
 
 try {
+    if ($action === 'admin' || $action === 'admin_add_user' || $action === 'admin_remove_user') {
+        calculus_require_admin();
+        $showAdmin = true;
+        $store = calculus_store();
+        calculus_seed_access_from_auth($store, $allowedUsers ?? null);
+
+        if ($action === 'admin_add_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+            $newEmail = strtolower(trim((string) ($_POST['email'] ?? '')));
+            if ($store->addAllowedUser($newEmail, calculus_user_email())) {
+                $flashOk = $newEmail . ' heeft nu toegang tot Calculus.';
+            } else {
+                $flashOk = $newEmail . ' stond al op de lijst.';
+            }
+        }
+
+        if ($action === 'admin_remove_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+            $removeEmail = strtolower(trim((string) ($_POST['email'] ?? '')));
+            if (calculus_email_is_admin($removeEmail)) {
+                throw new InvalidArgumentException('Vaste admins kunnen niet uit de allowlist worden gehaald.');
+            }
+            if ($store->removeAllowedUser($removeEmail)) {
+                $flashOk = $removeEmail . ' heeft geen toegang meer.';
+            } else {
+                $flashOk = $removeEmail . ' stond niet op de lijst.';
+            }
+        }
+
+        $adminUsers = $store->listAllowedUsers();
+    }
+
     if ($action === 'preview' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $projectNo = strtoupper(trim((string) ($_POST['project_no'] ?? '')));
         $postedCompany = trim((string) ($_POST['company'] ?? ''));
@@ -463,7 +525,16 @@ foreach ($companyRows as $companyRow) {
       <div class="tag">sleutels.kvt.nl / calculus</div>
       <h1>Calculus</h1>
     </div>
-    <div class="muted"><?= calculus_h(calculus_user_email()) ?></div>
+    <div class="header-meta">
+      <div class="muted"><?= calculus_h(calculus_user_email()) ?></div>
+      <?php if (calculus_user_is_admin()): ?>
+        <?php if ($showAdmin): ?>
+          <a class="btn secondary" href="?">Terug naar import</a>
+        <?php else: ?>
+          <a class="btn secondary" href="?action=admin">Gebruikersbeheer</a>
+        <?php endif; ?>
+      <?php endif; ?>
+    </div>
   </header>
 
   <?php if ($flashError !== ''): ?>
@@ -472,6 +543,75 @@ foreach ($companyRows as $companyRow) {
   <?php if ($flashOk !== ''): ?>
     <div class="banner ok"><?= calculus_h($flashOk) ?></div>
   <?php endif; ?>
+
+  <?php if ($showAdmin): ?>
+  <div class="card">
+    <h2>Gebruikersbeheer</h2>
+    <p class="muted">
+      Alleen vaste admins (<?= calculus_h(implode(', ', calculus_admin_emails())) ?>)
+      kunnen deze lijst wijzigen. Zodra hier gebruikers staan, geldt alleen deze
+      lijst plus de vaste admins — niet meer de open fallback uit <code>auth.php</code>.
+    </p>
+
+    <h3 class="subhead">Vaste admins</h3>
+    <ul class="user-list">
+      <?php foreach (calculus_admin_emails() as $adminEmail): ?>
+        <li>
+          <code><?= calculus_h($adminEmail) ?></code>
+          <span class="muted">altijd toegang · niet verwijderbaar</span>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+
+    <h3 class="subhead">Overige toegang</h3>
+    <?php if ($adminUsers === []): ?>
+      <p class="muted">Nog geen extra gebruikers. Voeg hieronder een e-mailadres toe.</p>
+    <?php else: ?>
+      <div class="table-wrap admin-table">
+        <table>
+          <thead>
+            <tr>
+              <th>E-mail</th>
+              <th>Toegevoegd</th>
+              <th>Door</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($adminUsers as $row): ?>
+              <tr>
+                <td><code><?= calculus_h($row['email']) ?></code></td>
+                <td class="muted"><?= calculus_h($row['added_at']) ?></td>
+                <td class="muted"><?= calculus_h($row['added_by']) ?></td>
+                <td>
+                  <?php if (calculus_email_is_admin($row['email'])): ?>
+                    <span class="muted">admin</span>
+                  <?php else: ?>
+                    <form method="post" class="inline-form" onsubmit="return confirm('Toegang intrekken voor <?= calculus_h($row['email']) ?>?');">
+                      <input type="hidden" name="email" value="<?= calculus_h($row['email']) ?>">
+                      <button type="submit" name="action" value="admin_remove_user" class="danger">Intrekken</button>
+                    </form>
+                  <?php endif; ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
+
+    <form method="post" class="admin-add">
+      <div class="field">
+        <label for="admin_email">E-mailadres toevoegen</label>
+        <input type="email" name="email" id="admin_email" required placeholder="collega@kvt.nl" autocomplete="off">
+      </div>
+      <div class="actions">
+        <button type="submit" name="action" value="admin_add_user">Toegang verlenen</button>
+      </div>
+    </form>
+  </div>
+  <?php else: ?>
+
   <?php foreach ($companyWarnings as $companyWarning): ?>
     <div class="banner warn"><?= calculus_h($companyWarning) ?></div>
   <?php endforeach; ?>
@@ -636,9 +776,11 @@ foreach ($companyRows as $companyRow) {
       <?php endif; ?>
     </div>
   <?php endif; ?>
+
+  <?php endif; /* !showAdmin */ ?>
 </div>
 
-<?php if ($companyEnvMap !== []): ?>
+<?php if (!$showAdmin && $companyEnvMap !== []): ?>
 <script>
 (function () {
   var map = <?= json_encode($companyEnvMap, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
