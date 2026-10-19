@@ -180,6 +180,7 @@ assert_not_contains($index, 'href="data/', 'UI linkt niet naar data');
 assert_contains($index, 'action=download_package', 'Excel blijft via het PHP-endpoint');
 assert_not_contains($index, 'cache_status', 'geen cache_status');
 assert_not_contains($index, 'attributes', 'geen voorbeeld-attributes');
+assert_contains($index, "require_once __DIR__ . '/lib/ImportStore.php';", 'ImportStore niet dubbel laden na logincheck');
 if (is_file($root . '/web/odata.php')) {
     fail('Calculus hoort geen odata.php te hebben');
 }

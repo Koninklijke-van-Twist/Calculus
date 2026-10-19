@@ -9,11 +9,11 @@ error_reporting(E_ALL);
 
 require __DIR__ . '/auth.php';
 require __DIR__ . '/logincheck.php';
-require __DIR__ . '/lib/BascalcParser.php';
-require __DIR__ . '/lib/RapidStartBuilder.php';
-require __DIR__ . '/lib/ImportStore.php';
-require __DIR__ . '/lib/BcAutomation.php';
-require __DIR__ . '/lib/CompanyCatalog.php';
+require_once __DIR__ . '/lib/BascalcParser.php';
+require_once __DIR__ . '/lib/RapidStartBuilder.php';
+require_once __DIR__ . '/lib/ImportStore.php';
+require_once __DIR__ . '/lib/BcAutomation.php';
+require_once __DIR__ . '/lib/CompanyCatalog.php';
 
 const CALCULUS_TEMPLATE = __DIR__ . '/templates/NEWBUILD_CALCULATIE_template.xlsx';
 
