@@ -52,7 +52,7 @@ web/
 
 Een ingelogde gebruiker downloadt een pakket via `?action=download_package` (zelfde login als de UI: `login/lib.php` en de allowlist). Na die check gaat het sessiebestand dicht. CLI en een optioneel runnergeheim (`$calculusRunnerSecret` of `CALCULUS_RUNNER_SECRET`, header `X-Calculus-Secret`) slaan de login over; een leeg geheim telt niet. Calculus heeft geen `odata.php` en geen `cache_status`.
 
-**Gebruikersbeheer:** alleen `opesket@kvt.nl` en `tfalken@kvt.nl` zien in de UI de knop *Gebruikersbeheer* (`?action=admin`). Zij voegen e-mailadressen toe of trekken toegang in; dat staat in SQLite (`allowed_users`), niet in `auth.php`. Zolang die tabel leeg is, geldt nog `$allowedUsers` uit `auth.php` (lege lijst = elke ingelogde gebruiker). Zodra er rijen staan, zijn alleen die adressen plus de twee vaste admins welkom.
+**Gebruikersbeheer:** alleen `opesket@kvt.nl`, `tfalken@kvt.nl` en `milanscheenloop@kvt.nl` zien in de UI de knop *Gebruikersbeheer* (`?action=admin`). Zij voegen e-mailadressen toe of trekken toegang in; dat staat in SQLite (`allowed_users`), niet in `auth.php`. Zolang die tabel leeg is, geldt nog `$allowedUsers` uit `auth.php` (lege lijst = elke ingelogde gebruiker). Zodra er rijen staan, zijn alleen die adressen plus de vaste admins welkom.
 
 ## Configuratie
 

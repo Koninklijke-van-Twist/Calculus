@@ -21,6 +21,7 @@ function calculus_admin_emails(): array
     return [
         'opesket@kvt.nl',
         'tfalken@kvt.nl',
+        'milanscheenloop@kvt.nl',
     ];
 }
 

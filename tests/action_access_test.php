@@ -52,6 +52,7 @@ assert_same(false, calculus_email_is_allowed('', null), 'geen whitelist, geen se
 assert_same(true, calculus_email_is_allowed('opesket@kvt.nl', ['andere@kvt.nl']), 'vaste admin altijd allowed');
 assert_same(true, calculus_email_is_admin('Opesket@kvt.nl'), 'admin opesket');
 assert_same(true, calculus_email_is_admin('tfalken@kvt.nl'), 'admin tfalken');
+assert_same(true, calculus_email_is_admin('MilanScheenloop@kvt.nl'), 'admin milan');
 assert_same(false, calculus_email_is_admin('tim@kvt.nl'), 'tim is geen vaste admin');
 assert_same(
     ['analyst@kvt.nl', 'planner@kvt.nl'],

@@ -43,7 +43,8 @@ $auth_list = [
 $auth = $auth_list[is_array($environment) ? ($environment[0] ?? '') : $environment] ?? null;
 
 // Initiële allowlist (ICT). Na eerste openen van Gebruikersbeheer door een
-// vaste admin (opesket@kvt.nl / tfalken@kvt.nl) leeft de lijst in SQLite
+// vaste admin (opesket@kvt.nl / tfalken@kvt.nl / milanscheenloop@kvt.nl)
+// leeft de lijst in SQLite
 // (web/data/calculus.sqlite) en is die leidend. Vaste admins staan hardcoded
 // in lib/ActionAccess.php en hebben altijd toegang, ook zonder deze lijst.
 $allowedUsers = [
