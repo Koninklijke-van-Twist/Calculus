@@ -20,3 +20,6 @@ web/data/**
 !web/data/packages/index.html
 !web/data/packages/index.php
 login
+
+web/analytics/analytics.sqlite
+web/analytics/analytics.sqlite-*
